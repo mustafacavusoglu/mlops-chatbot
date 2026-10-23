@@ -99,7 +99,8 @@ class Settings(msgspec.Struct):
     admin_sar_resource: str = "rolebindings"
     admin_sar_group: str = "rbac.authorization.k8s.io"
 
-    # Arayüz
+    # Arayüz: native = kendi arayüzümüz (internet gerekmez); chatkit = OpenAI ChatKit bileşeni (CDN + domain key)
+    ui_mode: str = "native"
     chatkit_js_url: str = "https://cdn.platform.openai.com/deployments/chatkit/chatkit.js"
     chatkit_domain_key: str = "local-dev"
 

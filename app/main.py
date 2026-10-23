@@ -8,6 +8,7 @@ from chatkit.server import StreamingResult
 from chatkit.store import NotFoundError
 from fastapi import Depends, FastAPI, Request, Response
 from fastapi.responses import FileResponse, RedirectResponse, StreamingResponse
+from fastapi.staticfiles import StaticFiles
 from starlette.middleware.sessions import SessionMiddleware
 
 from app import auth, indexer, memory, vectorstore
@@ -51,6 +52,7 @@ app.add_middleware(
     https_only=settings.auth_mode == "openshift",
 )
 app.include_router(auth.router)
+app.mount("/static", StaticFiles(directory=STATIC), name="static")  # vendor JS (marked, DOMPurify): CDN yok
 
 
 @app.exception_handler(NotFoundError)
@@ -79,6 +81,7 @@ def me(user: User = Depends(require_user)) -> Response:
         "title": settings.app_title,
         "chatkit_js_url": settings.chatkit_js_url,
         "chatkit_domain_key": settings.chatkit_domain_key,
+        "ui_mode": settings.ui_mode,
     })
 
 

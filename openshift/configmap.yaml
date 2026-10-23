@@ -24,6 +24,8 @@ data:
   SOURCES_FILE: "/config/sources.yaml"
   # Sohbet DB'si (Postgres) bağlantısı şifre içerdiği için Secret'ta: DATABASE_URL
   DB_POOL_SIZE: "10"
+  # native: kendi arayüzümüz, internet gerekmez. chatkit: OpenAI ChatKit (tarayıcı OpenAI CDN'ine erişmeli)
+  UI_MODE: "native"
   CHATKIT_JS_URL: "https://cdn.platform.openai.com/deployments/chatkit/chatkit.js"
   CHATKIT_DOMAIN_KEY: "local-dev"
   WORKERS: "1"

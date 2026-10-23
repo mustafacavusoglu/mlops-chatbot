@@ -8,10 +8,10 @@ GitHub ve Azure DevOps Services repoları da desteklenir.
 > *"Projemde gRPC desteğini nasıl açarım?"*, *"Notebook'ta custom package nasıl kurarım?"*,
 > *"Notebook'a API key'i nasıl eklerim?"*, *"Özel LLM modeline erişimi nasıl alırım?"*
 
-**Teknolojiler:** Python 3.13 · FastAPI · msgspec · LangGraph · Qdrant · mem0 · OpenAI ChatKit · OpenShift
+**Teknolojiler:** Python 3.13 · FastAPI · msgspec · LangGraph · Qdrant · mem0 · OpenAI ChatKit (protokol) · OpenShift
 
 ```
-Tarayıcı (ChatKit + kenar çubuğu)
+Tarayıcı (kendi sohbet arayüzümüz veya ChatKit bileşeni + kenar çubuğu)
    │  OpenShift OAuth ile giriş (oturum çerezi)
    ▼
 FastAPI ──/chatkit──> ChatKitServer ──arka plan görevi──> LangGraph agent
@@ -87,7 +87,8 @@ app/
   auth.py         OpenShift OAuth + admin kararı
   llm.py          OpenAI uyumlu LLM ve embedding istemcileri
   config.py       Tüm ayarlar (msgspec, ortam değişkenlerinden)
-  static/index.html   Arayüz (ChatKit web bileşeni + kenar çubuğu, build yok)
+  static/index.html   Arayüz: kenar çubuğu + native sohbet ekranı / ChatKit bileşeni (build yok)
+  static/vendor/      marked + DOMPurify (imajın içinde, CDN yok)
 openshift/        BuildConfig, Deployment, Route, ConfigMap, Secret örneği, CronJob...
 tests/            python -m tests.test_indexer / python -m tests.test_auth
 ```
@@ -143,7 +144,7 @@ python -m tests.test_auth
 | Qdrant | Kümede çalışıyor olmalı; adresi ve varsa API key'i lazım. Yoksa resmi Helm chart'ıyla (`qdrant/qdrant`) kurulabilir |
 | LLM ve embedding ucu | OpenAI uyumlu olmalı, ör. OpenShift AI'da vLLM ile serve edilen model. Adres, model adı ve embedding boyutu lazım |
 | Azure DevOps PAT | **Code → Read** yetkisi yeterli; hem repoları indekslemek hem build için kullanılır |
-| ChatKit erişimi | Kullanıcı tarayıcıları `cdn.platform.openai.com` ve `api.openai.com` adreslerine erişebilmeli; OpenAI Platform'dan domain key alınmalı (bkz. [ChatKit'in internet ihtiyacı](#önemli-chatkitin-internet-ihtiyacı)) |
+| İnternet | **Gerekmez.** Varsayılan arayüz (`UI_MODE=native`) tamamen kümede çalışır. Yalnızca `UI_MODE=chatkit` seçilirse tarayıcıların OpenAI CDN'ine erişmesi gerekir (bkz. [Arayüz modları](#arayüz-modları-native-ve-chatkit)) |
 
 ### 1. Kodu Azure DevOps Server'a koy
 
@@ -181,7 +182,6 @@ Ardından dosyalarda şunları kendi değerlerinle değiştir:
   - `LLM_BASE_URL` ve `EMBEDDING_BASE_URL`: yorum satırını aç.
   - `LLM_MODEL`, `EMBEDDING_MODEL`, `EMBEDDING_DIM`: `EMBEDDING_DIM`, modelin vektör boyutuyla aynı olmalı.
   - `ADMIN_GROUPS`: admin sayılacak OpenShift grupları (virgülle).
-  - `CHATKIT_DOMAIN_KEY`: OpenAI'dan aldığın domain key.
   - `sources.yaml`: indekslenecek Azure Repos adresleri (bkz. [Repo listesi](#repo-listesi-sourcesyaml)).
 - **`OAUTH_REDIRECT_URL`:** şimdilik bırak, 5. adımda dolduracağız.
 
@@ -238,7 +238,7 @@ oc get route mlops-chatbot -o jsonpath='{.spec.host}'
 oc patch configmap mlops-chatbot-config --type merge -p '{"data":{"OAUTH_REDIRECT_URL":"https://<cikan-host>/auth/callback"}}'
 ```
 
-Aynı adresi OpenAI Platform'daki domain allowlist ekranına da ekle. İleride `oc apply -k` tekrar
+`UI_MODE=chatkit` kullanıyorsan aynı adresi OpenAI Platform'daki domain allowlist ekranına da ekle. İleride `oc apply -k` tekrar
 çalıştırılacaksa `configmap.yaml` içindeki `OAUTH_REDIRECT_URL`'i de bu adresle güncelle; yoksa patch ezilir.
 
 ### 6. Build al
@@ -286,7 +286,7 @@ Admin'sen sol altta "Admin" etiketi ve İndeksleme butonu görünür.
 |---|---|
 | Girişte `redirect_uri` hatası | `OAUTH_REDIRECT_URL` Route adresiyle birebir aynı değil (https ve `/auth/callback` dahil) |
 | Pod açılmıyor: `SESSION_SECRET ayarlanmalı` | Secret'ta `SESSION_SECRET` eksik |
-| Sohbet ekranı boş ve uyarı çıkıyor | Tarayıcı OpenAI CDN'ine erişemiyor ya da domain key yanlış |
+| (`UI_MODE=chatkit`) Sohbet ekranı boş ve uyarı çıkıyor | Tarayıcı OpenAI CDN'ine erişemiyor ya da domain key yanlış; `UI_MODE=native` kullan |
 | İndekslemede `git clone başarısız` | PAT yetkisi yetersiz ya da sertifika hatası: şirket CA'sı kümenin trustedCA ayarında değil (bkz. [On-prem Azure DevOps Server](#on-prem-azure-devops-server)) |
 | Admin görünmüyor | Kullanıcı `ADMIN_GROUPS` içindeki grupta değil ya da namespace'te admin değil. Yetki değişince çıkış yapıp tekrar gir |
 | Postgres'e bağlanamıyor | `DATABASE_URL` yanlış veya şifre URL-encode edilmemiş; NetworkPolicy DB namespace'ine erişimi engelliyor olabilir |
@@ -335,7 +335,8 @@ Tüm ayarlar `app/config.py` içinde. Ortam değişkeni adı, alan adının büy
 | `ADMIN_GROUPS`, `ADMIN_USERS` | boş | virgülle ayrılmış |
 | `ADMIN_SAR_VERB` / `_RESOURCE` / `_GROUP` | `create` / `rolebindings` / `rbac.authorization.k8s.io` | bu yetkiye sahip olan admin |
 | `SESSION_SECRET` | – | **zorunlu** (openshift modunda) |
-| `CHATKIT_JS_URL`, `CHATKIT_DOMAIN_KEY` | OpenAI CDN, `local-dev` | aşağıya bak |
+| `UI_MODE` | `native` | `native` (internet gerekmez) veya `chatkit` |
+| `CHATKIT_JS_URL`, `CHATKIT_DOMAIN_KEY` | OpenAI CDN, `local-dev` | yalnızca `UI_MODE=chatkit` için |
 
 ### Repo listesi (`sources.yaml`)
 
@@ -378,22 +379,30 @@ sources:
   CA'sı kümenin `trustedCA` ayarında yoksa paketi kendi `ca.crt`'inle değiştir.
 - **Proxy:** küme çıkışı proxy üzerindeyse Azure DevOps sunucusunu, Qdrant'ı ve LLM ucunu `NO_PROXY`'ye ekle.
 
-## Önemli: ChatKit'in internet ihtiyacı
+## Arayüz modları: native ve ChatKit
 
-ChatKit arayüzü OpenAI tarafından barındırılan bir web bileşenidir. Self-host edilemiyor. Tarayıcının şu
-adreslere erişmesi gerekir:
+Backend [OpenAI ChatKit](https://github.com/openai/chatkit-python) protokolünü konuşur (`/chatkit`:
+JSON + SSE). Bu protokolü iki farklı arayüz kullanabilir; seçim ConfigMap'teki `UI_MODE` ile yapılır.
 
-- `cdn.platform.openai.com`: `chatkit.js` ve bileşenin iframe'i.
-- `api.openai.com`: domain key doğrulaması.
+| | `UI_MODE=native` (varsayılan) | `UI_MODE=chatkit` |
+|---|---|---|
+| Arayüz | Kendi sohbet ekranımız (`app/static/index.html`) | OpenAI'ın ChatKit web bileşeni |
+| İnternet | **Gerekmez.** Markdown için `marked`, güvenlik için `DOMPurify` imajın içinde (`app/static/vendor/`) | Tarayıcı `cdn.platform.openai.com` ve `api.openai.com`'a erişmeli |
+| Ek ayar | Yok | OpenAI Platform'dan domain key (`CHATKIT_DOMAIN_KEY`) |
+| Sohbet değiştirme | Her sohbetin akışı ayrı tutulur; cevap gelirken başka sohbete geçip dönünce cevap kaldığı yerden akmaya devam eder | Sohbet değişince bileşen yeniden kurulur, cevap arkada biter ve dönünce görünür |
 
-Sohbet verisi OpenAI'a gitmez. Mesajlar yalnızca bu uygulamanın `/chatkit` ucuna ve senin LLM'ine gider.
-Kapalı ağda yapılacaklar:
+Her iki modda da kenar çubuğu, sohbet silme, admin indeksleme paneli ve açık/koyu tema aynıdır. Sohbet
+verisi hiçbir modda OpenAI'a gitmez; mesajlar yalnızca bu uygulamaya ve senin LLM'ine gider.
 
-1. Kullanıcı tarayıcılarının proxy/firewall üzerinden bu iki adrese erişimini aç.
+`UI_MODE=chatkit` kullanılacaksa:
+
+1. Kullanıcı tarayıcılarının proxy/firewall üzerinden yukarıdaki iki adrese erişimini aç.
 2. [OpenAI Platform → Settings → Security → Domain allowlist](https://platform.openai.com/settings/organization/security/domain-allowlist)
    ekranında Route adresini ekle ve verilen anahtarı `CHATKIT_DOMAIN_KEY` olarak gir. `localhost`'ta
    doğrulama atlanır, `local-dev` yeterlidir.
-3. Bileşen yüklenemezse arayüz bunu açıklayan bir uyarı gösterir.
+3. Bileşen yüklenemezse arayüz bunu açıklayan bir uyarı gösterir; `UI_MODE=native`'e dönmek yeterlidir.
+
+Vendor dosyalarının sürümleri: `marked` 18.0.13 (MIT), `DOMPurify` 3.4.15 (Apache-2.0 / MPL-2.0).
 
 ## Sohbetler nerede tutuluyor?
 
