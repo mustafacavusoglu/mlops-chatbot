@@ -1,0 +1,389 @@
+<!doctype html>
+<html lang="tr" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MLOps Asistanı</title>
+<style>
+  :root {
+    --bg: #ffffff; --fg: #0d0d0d; --muted: #6b6b6b; --surface: #f4f4f4;
+    --border: #e3e3e3; --accent: #0d0d0d; --accent-fg: #ffffff; --link: #1a5fb4;
+    --warn-bg: #fff6e5; --warn-fg: #8a5300; --error: #c0392b; --ok: #1e7b34;
+  }
+  :root[data-theme="dark"] {
+    --bg: #212121; --fg: #ececec; --muted: #a3a3a3; --surface: #303030;
+    --border: #3d3d3d; --accent: #ececec; --accent-fg: #0d0d0d; --link: #8ab4f8;
+    --warn-bg: #3a2e14; --warn-fg: #f5c46b; --error: #ff7b6b; --ok: #6fcf8a;
+  }
+  * { box-sizing: border-box; }
+  [hidden] { display: none !important; }
+  html, body { height: 100%; margin: 0; overflow-x: hidden; }
+  body { display: flex; background: var(--bg); color: var(--fg); font: 15px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  button { font: inherit; color: inherit; }
+  a { color: var(--link); }
+  .btn { flex: none; padding: 6px 10px; border: 1px solid var(--border); border-radius: 8px; background: none; text-decoration: none; white-space: nowrap; cursor: pointer; }
+  .btn:hover { background: var(--border); }
+
+  #sidebar { flex: none; width: 260px; display: flex; flex-direction: column; border-right: 1px solid var(--border); background: var(--surface); }
+  .brand { margin: 12px 14px 0; font-size: 16px; font-weight: 600; }
+  #newchat { margin: 10px; text-align: left; }
+  #list { flex: 1; min-height: 0; overflow-y: auto; padding: 0 8px 8px; }
+  .row { display: flex; align-items: center; border-radius: 8px; }
+  .row:hover, .row[aria-current="true"] { background: var(--border); }
+  .row[aria-current="true"] .conv { font-weight: 600; }
+  .conv { flex: 1; min-width: 0; display: flex; align-items: center; gap: 8px; padding: 8px 10px; border: none; background: none; text-align: left; cursor: pointer; }
+  .conv-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .conv-spin { flex: none; width: 12px; height: 12px; border: 2px solid var(--muted); border-top-color: transparent; border-radius: 50%; animation: spin .8s linear infinite; }
+  .conv-unread { flex: none; width: 8px; height: 8px; border-radius: 50%; background: var(--link); }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  @media (prefers-reduced-motion: reduce) { .conv-spin { animation-duration: 3s; } }
+  .del { flex: none; width: 28px; height: 28px; margin-right: 4px; border: none; border-radius: 6px; background: none; color: var(--muted); cursor: pointer; opacity: 0; }
+  .row:hover .del, .row[aria-current="true"] .del, .del:focus-visible { opacity: 1; }
+  .del:hover { color: var(--error); }
+  @media (hover: none) { .del { opacity: 1; } }
+  .list-note { padding: 8px 10px; color: var(--muted); font-size: 13px; }
+  #adminBtn { margin: 0 10px 10px; text-align: left; }
+  .side-foot { display: flex; align-items: center; gap: 6px; padding: 10px; border-top: 1px solid var(--border); }
+  .avatar { flex: none; width: 28px; height: 28px; border-radius: 50%; background: var(--accent); color: var(--accent-fg); font-size: 13px; font-weight: 600; line-height: 28px; text-align: center; }
+  #who { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .badge { flex: none; padding: 0 6px; border-radius: 8px; background: var(--accent); color: var(--accent-fg); font-size: 11px; }
+  .side-foot .btn { padding: 4px 8px; }
+
+  #main { flex: 1; min-width: 0; min-height: 0; display: flex; flex-direction: column; position: relative; }
+  #topbar { display: none; align-items: center; gap: 8px; padding: 8px 12px; border-bottom: 1px solid var(--border); }
+  #banner { margin: 12px; padding: 12px 14px; border-radius: 10px; background: var(--warn-bg); color: var(--warn-fg); font-size: 14px; }
+  #host { flex: 1; min-height: 0; position: relative; }
+  openai-chatkit { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+  #backdrop { display: none; }
+
+  #modal { position: fixed; inset: 0; z-index: 30; display: flex; align-items: center; justify-content: center; padding: 16px; background: rgba(0,0,0,.4); }
+  #modal .box { width: min(640px, 100%); max-height: 90vh; overflow: auto; padding: 20px; border: 1px solid var(--border); border-radius: 14px; background: var(--bg); }
+  #modal h2 { margin: 0 0 12px; font-size: 18px; }
+  .srcs { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0 12px; }
+  .meta { color: var(--muted); font-size: 13px; margin: 8px 0; }
+  .tbl { overflow-x: auto; }
+  table { border-collapse: collapse; width: 100%; font-size: 13px; }
+  th, td { border: 1px solid var(--border); padding: 5px 8px; text-align: left; vertical-align: top; }
+  td.err { color: var(--error); }
+  .box-foot { display: flex; justify-content: flex-end; margin-top: 14px; }
+
+  @media (max-width: 767px) {
+    #topbar { display: flex; }
+    #sidebar { position: fixed; z-index: 20; top: 0; bottom: 0; left: 0; width: 280px; max-width: 85vw; visibility: hidden; transform: translateX(-100%); transition: transform .2s, visibility .2s; }
+    body.drawer #sidebar { visibility: visible; transform: none; }
+    body.drawer #backdrop { display: block; position: fixed; z-index: 10; inset: 0; background: rgba(0,0,0,.4); }
+  }
+</style>
+</head>
+<body>
+<nav id="sidebar" aria-label="Sohbetler">
+  <div class="brand">MLOps Asistanı</div>
+  <button class="btn" id="newchat" type="button">+ Yeni sohbet</button>
+  <div id="list"></div>
+  <button class="btn" id="adminBtn" type="button" hidden>⚙ İndeksleme</button>
+  <div class="side-foot">
+    <span class="avatar" id="avatar" aria-hidden="true"></span>
+    <span id="who"></span>
+    <span class="badge" id="adminBadge" hidden>Admin</span>
+    <button class="btn" id="theme" type="button" aria-label="Açık/koyu tema" title="Açık/koyu tema">◐</button>
+    <a class="btn" href="/auth/logout">Çıkış</a>
+  </div>
+</nav>
+<div id="backdrop"></div>
+
+<div id="main">
+  <div id="topbar">
+    <button class="btn" id="menu" type="button" aria-label="Sohbetleri aç" aria-expanded="false">☰</button>
+    <strong id="apptitle">MLOps Asistanı</strong>
+  </div>
+  <div id="banner" role="alert" hidden></div>
+  <div id="host"></div>
+</div>
+
+<div id="modal" hidden>
+  <div class="box" role="dialog" aria-modal="true" aria-labelledby="mtitle">
+    <h2 id="mtitle">Kaynak indeksleme</h2>
+    <div class="srcs" id="srcs"></div>
+    <div class="meta" id="imeta"></div>
+    <div class="tbl"><table>
+      <thead><tr><th>Kaynak</th><th>İndekslenen</th><th>Atlanan</th><th>Silinen</th><th>Parça</th><th>Hata</th></tr></thead>
+      <tbody id="itbody"></tbody>
+    </table></div>
+    <div class="box-foot"><button class="btn" id="mclose" type="button">Kapat</button></div>
+  </div>
+</div>
+
+<script>
+(() => {
+  const $ = (id) => document.getElementById(id);
+  const mk = (tag, cls, text) => Object.assign(document.createElement(tag), { className: cls || "", textContent: text ?? "" });
+  const store = {
+    get(k) { try { return localStorage.getItem(k); } catch { return null; } },
+    set(k, v) { try { localStorage.setItem(k, v); } catch {} },
+  };
+
+  let me = null, chat = null;
+  let activeId = new URLSearchParams(location.search).get("c") || null;
+  let threads = null;               // null = yüklenemedi
+  const wasRunning = new Map();     // id -> running (önceki yoklama)
+  const unread = new Set();         // arka planda cevabı gelen sohbetler
+  const endSeen = new Set();        // bu sekmede response.end görülen aktif sohbetler
+  let pollTimer = null;
+
+  // ---- Tema ----
+  function applyTheme(t) {
+    document.documentElement.dataset.theme = t;
+    $("theme").textContent = t === "dark" ? "☀" : "☾";
+  }
+  applyTheme(store.get("theme") === "dark" ? "dark" : "light");
+  $("theme").onclick = () => {
+    const t = document.documentElement.dataset.theme === "dark" ? "light" : "dark";
+    store.set("theme", t);
+    applyTheme(t);
+    if (chat) chat.setOptions(buildOptions());
+  };
+
+  // ---- Yardımcılar ----
+  function toLogin() { location.href = "/auth/login"; }
+  async function api(url, opts) {
+    const r = await fetch(url, { credentials: "same-origin", ...opts });
+    if (r.status === 401) { toLogin(); throw new Error("401"); }
+    return r;
+  }
+  function showBanner(msg) { $("banner").textContent = msg; $("banner").hidden = false; }
+  const NET_MSG = "Sohbet bileşeni yüklenemedi. ChatKit'in çalışması için bu cihazın cdn.platform.openai.com ve api.openai.com adreslerine erişebilmesi gerekir; ağ/güvenlik duvarı ayarlarını kontrol edip sayfayı yenile.";
+
+  function setDrawer(open) {
+    document.body.classList.toggle("drawer", open);
+    $("menu").setAttribute("aria-expanded", String(open));
+  }
+  $("menu").onclick = () => setDrawer(true);
+  $("backdrop").onclick = () => setDrawer(false);
+  addEventListener("keydown", (e) => { if (e.key === "Escape") { setDrawer(false); closeModal(); } });
+
+  function setActive(id) {
+    activeId = id || null;
+    history.replaceState(null, "", activeId ? `?c=${encodeURIComponent(activeId)}` : location.pathname);
+    if (activeId) unread.delete(activeId);
+    renderList();
+  }
+
+  // ---- ChatKit ----
+  function buildOptions() {
+    return {
+      api: {
+        url: "/chatkit",
+        domainKey: me.chatkit_domain_key,
+        fetch: async (u, o) => {
+          const r = await fetch(u, { ...o, credentials: "same-origin" });
+          if (r.status === 401) toLogin();
+          return r;
+        },
+      },
+      history: { enabled: false },
+      header: { enabled: true, title: { enabled: true } },
+      initialThread: activeId,
+      startScreen: {
+        greeting: "Merhaba! MLOps platformu, notebook'lar ve projelerinle ilgili sorularını sorabilirsin.",
+        prompts: [
+          { label: "gRPC desteği", prompt: "Projemde gRPC desteğini nasıl açarım?" },
+          { label: "Custom package", prompt: "Notebook'ta custom package nasıl kurarım?" },
+          { label: "API key güvenliği", prompt: "Notebook'a API key'i güvenli şekilde nasıl eklerim?" },
+          { label: "Özel LLM erişimi", prompt: "Özel LLM modeline erişimi nasıl alırım?" },
+        ],
+      },
+      composer: { placeholder: "Bir soru sor…" },
+      theme: { colorScheme: document.documentElement.dataset.theme, radius: "round", density: "normal" },
+    };
+  }
+
+  async function initChat() {
+    const timer = setTimeout(() => { if (!ready) showBanner(NET_MSG); }, 15000);
+    const s = document.createElement("script");
+    s.src = me.chatkit_js_url;
+    s.async = true;
+    s.onerror = () => { clearTimeout(timer); showBanner(NET_MSG); };
+    document.head.append(s);
+    await customElements.whenDefined("openai-chatkit");
+    mount();
+  }
+
+  // ChatKit, setThreadId'de süren stream'i kesmiyor ve eski sohbetin cevabını yeni sohbete çiziyor.
+  // Cevap akarken sohbet değişirse bileşeni baştan kuruyoruz: bağlantı kopar, sunucu cevabı arkada bitirir.
+  let ready = false, streaming = false;
+  function mount() {
+    streaming = false;
+    chat?.remove();
+    chat = document.createElement("openai-chatkit");
+    chat.addEventListener("chatkit.ready", () => { ready = true; $("banner").hidden = true; });
+    chat.addEventListener("chatkit.error", (e) => {
+      console.error("chatkit.error", e.detail);
+      showBanner("Sohbet sırasında bir hata oluştu. " + NET_MSG);
+    });
+    chat.addEventListener("chatkit.thread.change", (e) => {
+      const id = e.detail?.threadId ?? null;
+      if (id !== activeId) setActive(id);
+      loadList();
+    });
+    chat.addEventListener("chatkit.response.start", () => { streaming = true; if (activeId) endSeen.delete(activeId); loadList(); });
+    chat.addEventListener("chatkit.response.end", () => { streaming = false; if (activeId) endSeen.add(activeId); loadList(); });
+    chat.setOptions(buildOptions());
+    $("host").append(chat);
+  }
+
+  async function switchTo(id) {
+    setDrawer(false);
+    setActive(id);
+    if (streaming) return mount();  // initialThread = activeId
+    try { await chat?.setThreadId(id); } catch (e) { console.error(e); }
+  }
+
+  // ---- Kenar çubuğu ----
+  function renderList() {
+    const list = $("list");
+    list.replaceChildren();
+    if (threads === null) return list.append(mk("div", "list-note", "Sohbetler yüklenemedi"));
+    if (!threads.length) return list.append(mk("div", "list-note", "Henüz sohbet yok"));
+    for (const t of threads) {
+      const row = list.appendChild(mk("div", "row"));
+      if (t.id === activeId) row.setAttribute("aria-current", "true");
+      const b = row.appendChild(mk("button", "conv"));
+      b.type = "button";
+      const title = t.title || "Yeni sohbet";
+      b.title = title;
+      b.append(mk("span", "conv-title", title));
+      if (t.running) b.append(Object.assign(mk("span", "conv-spin"), { role: "img", ariaLabel: "Cevap hazırlanıyor" }));
+      else if (unread.has(t.id)) b.append(Object.assign(mk("span", "conv-unread"), { role: "img", ariaLabel: "Yeni cevap" }));
+      b.onclick = () => openThread(t.id);
+      const d = row.appendChild(mk("button", "del", "×"));
+      d.type = "button";
+      d.title = d.ariaLabel = "Sohbeti sil";
+      d.onclick = () => removeThread(t);
+    }
+  }
+
+  const openThread = (id) => switchTo(id);
+  async function newChat() {
+    await switchTo(null);
+    chat?.focusComposer().catch(() => {});
+  }
+  $("newchat").onclick = newChat;
+
+  async function removeThread(t) {
+    if (!confirm(`"${t.title || "Yeni sohbet"}" sohbeti silinsin mi?`)) return;
+    try {
+      const r = await api(`/api/threads/${encodeURIComponent(t.id)}`, { method: "DELETE" });
+      if (!r.ok) throw new Error(r.status);
+    } catch (e) { if (e.message !== "401") alert("Sohbet silinemedi."); return; }
+    if (t.id === activeId) await newChat();
+    loadList();
+  }
+
+  // ---- Liste + yoklama ----
+  async function loadList() {
+    try {
+      const r = await api("/api/threads");
+      if (!r.ok) throw new Error(r.status);
+      const data = await r.json();
+      threads = data;
+      for (const t of data) {
+        const was = wasRunning.get(t.id);
+        if (was && !t.running) {
+          if (t.id === activeId) onActiveFinished(t.id);
+          else unread.add(t.id);
+        }
+        wasRunning.set(t.id, t.running);
+      }
+    } catch (e) { if (e.message === "401") return; threads = null; }
+    renderList();
+    schedule();
+  }
+  function schedule() {
+    clearTimeout(pollTimer);
+    pollTimer = setTimeout(loadList, threads?.some((t) => t.running) ? 3000 : 30000);
+  }
+  // Aktif sohbet bittiğinde response.end bu sekmede görülmediyse (başka sohbete geçip dönüldü) cevabı yeniden yükle
+  function onActiveFinished(id) {
+    setTimeout(async () => {
+      if (id !== activeId) return;
+      if (endSeen.delete(id)) return;
+      try { await chat?.fetchUpdates?.(); } catch (e) { console.error(e); }
+      // ponytail: fetchUpdates yenilediyse de tekrar yükler; zararsız, görünür yenilenme doğrulanamıyor
+      setTimeout(() => { if (id === activeId) chat?.setThreadId(id).catch(console.error); }, 1500);
+    }, 1500);
+  }
+
+  // ---- Admin paneli ----
+  let admTimer = null;
+  const fmt = (v) => (v ? new Date(v).toLocaleString("tr") : "-");
+  function closeModal() { $("modal").hidden = true; clearTimeout(admTimer); }
+  $("mclose").onclick = closeModal;
+  $("modal").onclick = (e) => { if (e.target === $("modal")) closeModal(); };
+
+  async function reindex(source) {
+    try {
+      const r = await api("/api/admin/reindex" + (source ? `?source=${encodeURIComponent(source)}` : ""), { method: "POST" });
+      if (r.status === 202) { const j = await r.json(); if (!j.started) alert("İndeksleme zaten çalışıyor."); }
+      else alert("İndeksleme başlatılamadı.");
+    } catch (e) { if (e.message !== "401") alert("İndeksleme başlatılamadı."); }
+    pollStatus();
+  }
+  async function pollStatus() {
+    clearTimeout(admTimer);
+    if ($("modal").hidden) return;
+    let running = false;
+    try {
+      const r = await api("/api/admin/index-status");
+      const s = await r.json();
+      running = !!s.running;
+      $("imeta").textContent = `${running ? "Çalışıyor…" : "Beklemede"} · Başlangıç: ${fmt(s.started_at)} · Bitiş: ${fmt(s.finished_at)} · Tetikleyen: ${s.trigger === "schedule" ? "zamanlanmış" : s.trigger === "manual" ? "manuel" : s.trigger || "-"}`;
+      const body = $("itbody");
+      body.replaceChildren();
+      for (const [name, x] of Object.entries(s.results || {})) {
+        const tr = body.appendChild(mk("tr"));
+        for (const v of [name, x.files_indexed, x.files_skipped, x.files_deleted, x.chunks]) tr.append(mk("td", "", v ?? "-"));
+        tr.append(mk("td", x.error ? "err" : "", x.error || ""));
+      }
+      if (!body.children.length) body.append(Object.assign(mk("td", "", "Henüz sonuç yok"), { colSpan: 6 }));
+    } catch (e) { if (e.message !== "401") $("imeta").textContent = "Durum alınamadı."; }
+    admTimer = setTimeout(pollStatus, running ? 2000 : 10000);
+  }
+  async function openAdmin() {
+    $("modal").hidden = false;
+    const box = $("srcs");
+    box.replaceChildren();
+    const all = box.appendChild(mk("button", "btn", "Tümünü indeksle"));
+    all.type = "button";
+    all.onclick = () => reindex();
+    try {
+      const r = await api("/api/admin/sources");
+      for (const s of await r.json()) {
+        const b = box.appendChild(mk("button", "btn", s.name));
+        b.type = "button";
+        b.title = [s.provider, s.url, s.branch].filter(Boolean).join(" · ");
+        b.onclick = () => reindex(s.name);
+      }
+    } catch (e) { if (e.message !== "401") box.append(mk("span", "meta", "Kaynaklar alınamadı.")); }
+    pollStatus();
+  }
+
+  // ---- Başlangıç ----
+  (async () => {
+    try {
+      const r = await fetch("/api/me", { credentials: "same-origin" });
+      if (r.status === 401) return toLogin();
+      if (!r.ok) throw new Error(r.status);
+      me = await r.json();
+    } catch { return showBanner("Sunucuya ulaşılamadı. Sayfayı yenilemeyi dene."); }
+    document.title = me.title || document.title;
+    $("apptitle").textContent = document.querySelector(".brand").textContent = me.title || "MLOps Asistanı";
+    $("who").textContent = me.user;
+    $("avatar").textContent = Array.from(me.user || "?")[0].toLocaleUpperCase("tr");
+    if (me.is_admin) { $("adminBadge").hidden = false; $("adminBtn").hidden = false; $("adminBtn").onclick = openAdmin; }
+    loadList();
+    initChat().catch((e) => { console.error(e); showBanner(NET_MSG); });
+  })();
+})();
+</script>
+</body>
+</html>

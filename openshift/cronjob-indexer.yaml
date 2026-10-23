@@ -1,0 +1,50 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: mlops-chatbot-indexer
+  annotations:
+    image.openshift.io/triggers: '[{"from":{"kind":"ImageStreamTag","name":"mlops-chatbot:latest"},"fieldPath":"spec.jobTemplate.spec.template.spec.containers[?(@.name==\"indexer\")].image"}]'
+spec:
+  schedule: "0 */6 * * *"   # "belirli aralıklarla indeksleme" ayarı: 6 saatte bir
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 1
+      template:
+        spec:
+          serviceAccountName: mlops-chatbot
+          restartPolicy: Never
+          containers:
+            - name: indexer
+              image: image-registry.openshift-image-registry.svc:5000/<namespace>/mlops-chatbot:latest
+              command: ["python", "-m", "app.indexer"]
+              envFrom:
+                - configMapRef:
+                    name: mlops-chatbot-config
+                - secretRef:
+                    name: mlops-chatbot-secrets
+              env:
+                - name: SSL_CERT_FILE
+                  value: /etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem
+              resources:
+                requests: {cpu: 250m, memory: 512Mi}
+                limits: {cpu: "1", memory: 1Gi}
+              volumeMounts:
+                - {name: config, mountPath: /config}
+                - name: trusted-ca
+                  mountPath: /etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem
+                  subPath: ca-bundle.crt
+                  readOnly: true
+          volumes:
+            - name: config
+              configMap:
+                name: mlops-chatbot-config
+                items:
+                  - {key: sources.yaml, path: sources.yaml}
+            - name: trusted-ca
+              configMap:
+                name: mlops-chatbot-trusted-ca
+                items:
+                  - {key: ca-bundle.crt, path: ca-bundle.crt}

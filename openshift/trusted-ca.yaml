@@ -1,0 +1,7 @@
+# OpenShift bu ConfigMap'e ca-bundle.crt anahtarını otomatik enjekte eder.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: mlops-chatbot-trusted-ca
+  labels:
+    config.openshift.io/inject-trusted-cabundle: "true"

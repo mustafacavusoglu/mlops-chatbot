@@ -1,0 +1,124 @@
+import asyncio
+import logging
+from contextlib import asynccontextmanager
+from pathlib import Path
+
+import msgspec
+from chatkit.server import StreamingResult
+from fastapi import Depends, FastAPI, HTTPException, Request, Response
+from fastapi.responses import FileResponse, RedirectResponse, StreamingResponse
+from starlette.middleware.sessions import SessionMiddleware
+
+from app import auth, indexer, memory, vectorstore
+from app.auth import User, current_user, require_admin, require_user
+from app.chat import running, server
+from app.config import load_sources, settings
+from app.store import store
+
+logging.basicConfig(level=settings.log_level, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+log = logging.getLogger(__name__)
+STATIC = Path(__file__).with_name("static")
+
+if settings.auth_mode == "openshift" and settings.session_secret == "change-me":
+    raise RuntimeError("SESSION_SECRET ayarlanmalı (Secret'tan rastgele bir değer)")
+
+
+def to_json(data, status: int = 200) -> Response:
+    return Response(msgspec.json.encode(data), status_code=status, media_type="application/json")
+
+
+@asynccontextmanager
+async def lifespan(_: FastAPI):
+    await store.setup()
+    # Qdrant/mem0 geçici olarak erişilemezse uygulama yine açılsın; arama hatası cevapta görünür
+    for name, setup in (("qdrant", vectorstore.setup), ("mem0", memory.setup)):
+        try:
+            await setup()
+        except Exception:
+            log.exception("%s kurulumu başarısız", name)
+    yield
+
+
+app = FastAPI(title=settings.app_title, lifespan=lifespan, docs_url=None, redoc_url=None)
+app.add_middleware(
+    SessionMiddleware,
+    secret_key=settings.session_secret,
+    max_age=settings.session_max_age,
+    same_site="lax",
+    https_only=settings.auth_mode == "openshift",
+)
+app.include_router(auth.router)
+
+
+@app.get("/healthz", include_in_schema=False)
+def healthz() -> Response:
+    return to_json({"ok": True})
+
+
+@app.get("/", include_in_schema=False)
+def ui(request: Request) -> Response:
+    if current_user(request) is None:
+        return RedirectResponse("/auth/login")
+    return FileResponse(STATIC / "index.html")
+
+
+@app.get("/api/me")
+def me(user: User = Depends(require_user)) -> Response:
+    return to_json({
+        "user": user.name,
+        "is_admin": user.is_admin,
+        "title": settings.app_title,
+        "chatkit_js_url": settings.chatkit_js_url,
+        "chatkit_domain_key": settings.chatkit_domain_key,
+    })
+
+
+@app.post("/chatkit")
+async def chatkit(request: Request, user: User = Depends(require_user)) -> Response:
+    result = await server.process(await request.body(), {"user_id": user.name})
+    if isinstance(result, StreamingResult):
+        return StreamingResponse(result, media_type="text/event-stream", headers={"X-Accel-Buffering": "no"})
+    return Response(result.json, media_type="application/json")
+
+
+@app.get("/api/threads")
+async def threads(user: User = Depends(require_user)) -> Response:
+    page = await store.load_threads(100, None, "desc", {"user_id": user.name})
+    return to_json([
+        {"id": t.id, "title": t.title, "created_at": t.created_at.isoformat(), "running": t.id in running}
+        for t in page.data
+    ])
+
+
+@app.delete("/api/threads/{thread_id}")
+async def delete_thread(thread_id: str, user: User = Depends(require_user)) -> Response:
+    await store.delete_thread(thread_id, {"user_id": user.name})
+    return Response(status_code=204)
+
+
+# --- admin: indeksleme
+_index_task: asyncio.Task | None = None
+
+
+@app.post("/api/admin/reindex")
+async def reindex(source: str | None = None, user: User = Depends(require_admin)) -> Response:
+    global _index_task
+    if indexer.is_running():
+        return to_json({"started": False}, 202)
+    log.info("manuel indeksleme: %s, kaynak=%s", user.name, source or "hepsi")
+    _index_task = asyncio.create_task(indexer.run(source, trigger=f"manual:{user.name}"))
+    return to_json({"started": True}, 202)
+
+
+@app.get("/api/admin/index-status")
+def index_status(_: User = Depends(require_admin)) -> Response:
+    return to_json(indexer.status)
+
+
+@app.get("/api/admin/sources")
+def sources(_: User = Depends(require_admin)) -> Response:
+    return to_json([
+        {"name": s.name, "provider": s.provider, "url": indexer.clean_url(s.url), "branch": s.branch}
+        for s in load_sources()
+    ])
+

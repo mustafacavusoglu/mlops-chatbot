@@ -1,0 +1,10 @@
+__pycache__/
+*.pyc
+.venv/
+venv/
+.env
+sources.yaml
+data/
+secret.yaml
+openshift/secret.yaml
+.DS_Store

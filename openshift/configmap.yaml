@@ -1,0 +1,38 @@
+# Tek ConfigMap: env değişkenleri (envFrom) + sources.yaml (/config volume).
+# Basit tutmak için ikisi aynı yerde; envFrom'a sources.yaml anahtarı da girer ama zararsız.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: mlops-chatbot-config
+data:
+  AUTH_MODE: "openshift"
+  OAUTH_CLIENT_ID: "system:serviceaccount:<namespace>:mlops-chatbot"   # <namespace> değiştir
+  OAUTH_REDIRECT_URL: "https://<route-host>/auth/callback"             # <route-host> değiştir
+  # Şirket içi OpenAI uyumlu uç (vLLM, LiteLLM, Azure OpenAI v1). Boş bırakılırsa api.openai.com
+  # LLM_BASE_URL: "http://llm-gateway.llm.svc:4000/v1"
+  # EMBEDDING_BASE_URL: "http://embedding.llm.svc:8000/v1"   # boşsa LLM_BASE_URL
+  LLM_MODEL: "gpt-4o-mini"
+  MEMORY_LLM_MODEL: "gpt-4o-mini"
+  EMBEDDING_MODEL: "text-embedding-3-small"
+  EMBEDDING_DIM: "1536"
+  QDRANT_COLLECTION: "mlops_docs"
+  TOP_K: "6"
+  ADMIN_GROUPS: "mlops-admins"
+  ADMIN_SAR_VERB: "create"
+  ADMIN_SAR_RESOURCE: "rolebindings"
+  ADMIN_SAR_GROUP: "rbac.authorization.k8s.io"
+  SOURCES_FILE: "/config/sources.yaml"
+  # sqlite: tek pod + PVC. Çok pod için Secret'ta postgresql+asyncpg://... DATABASE_URL ver
+  # (envFrom sırası: secret sonra gelir, ConfigMap'i ezer).
+  DATABASE_URL: "sqlite+aiosqlite:////app/data/chat.db"
+  CHATKIT_JS_URL: "https://cdn.platform.openai.com/deployments/chatkit/chatkit.js"
+  CHATKIT_DOMAIN_KEY: "local-dev"
+  WORKERS: "1"
+  sources.yaml: |
+    sources:
+      - name: ml-platform
+        url: https://github.com/ORG/ml-platform.git
+        provider: github
+        branch: main
+        token_env: GITHUB_TOKEN
+        exclude: ["tests/**"]

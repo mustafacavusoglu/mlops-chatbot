@@ -1,0 +1,26 @@
+# Git'ten build. Binary build istersen: oc start-build mlops-chatbot --from-dir=. --follow
+# (binary için source bölümünü `source: {type: Binary}` yap)
+# Nexus mirror için buildArgs ekle: PIP_INDEX_URL, PIP_TRUSTED_HOST, BASE_IMAGE
+apiVersion: build.openshift.io/v1
+kind: BuildConfig
+metadata:
+  name: mlops-chatbot
+spec:
+  source:
+    type: Git
+    git:
+      uri: https://github.com/mustafacavusoglu/mlops-chatbot.git   # şirket içi git mirror kullanıyorsan değiştir
+      ref: main
+  strategy:
+    type: Docker
+    dockerStrategy:
+      dockerfilePath: Dockerfile
+      # buildArgs:
+      #   - {name: PIP_INDEX_URL, value: "https://nexus.example.com/repository/pypi/simple"}
+      #   - {name: PIP_TRUSTED_HOST, value: "nexus.example.com"}
+  output:
+    to:
+      kind: ImageStreamTag
+      name: mlops-chatbot:latest
+  triggers:
+    - type: ConfigChange

@@ -1,0 +1,14 @@
+# secret.example.yaml bilerek listede yok: Secret'ı oc create secret ile oluştur.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - imagestream.yaml
+  - buildconfig.yaml
+  - serviceaccount.yaml
+  - configmap.yaml
+  - trusted-ca.yaml
+  - pvc.yaml
+  - deployment.yaml
+  - service.yaml
+  - route.yaml
+  - cronjob-indexer.yaml

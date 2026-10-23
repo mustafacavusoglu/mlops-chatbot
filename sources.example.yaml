@@ -1,0 +1,32 @@
+# cp sources.example.yaml sources.yaml
+# OpenShift'te bu içerik configmap.yaml içindeki sources.yaml anahtarındadır.
+sources:
+  # Herkese açık örnek: token gerekmez (hemen denemek için)
+  - name: azure-mlops-v2
+    url: https://github.com/Azure/mlops-v2.git
+    provider: github
+    branch: main
+    include: ["**/*.md"]
+
+  # GitHub reposu; token_env = token'ı tutan ORTAM DEĞİŞKENİNİN adı (değer Secret'ta)
+  - name: ml-platform
+    url: https://github.com/ORG/ml-platform.git
+    provider: github
+    branch: main
+    token_env: GITHUB_TOKEN
+    include:            # sadece bu desenler indekslenir (boşsa varsayılan liste)
+      - "docs/**/*.md"
+      - "**/*.py"
+    exclude:            # include'dan sonra çıkarılacaklar
+      - "tests/**"
+      - "**/*.lock"
+    max_file_kb: 512    # bundan büyük dosyalar atlanır
+
+  # Azure DevOps reposu
+  - name: model-serving
+    url: https://dev.azure.com/<org>/<project>/_git/<repo>
+    provider: azure
+    branch: master
+    token_env: AZURE_DEVOPS_PAT
+    exclude:
+      - "notebooks/archive/**"

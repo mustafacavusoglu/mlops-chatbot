@@ -1,0 +1,16 @@
+# Sticky cookie oturumları router'da varsayılan olarak açıktır.
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: mlops-chatbot
+  annotations:
+    haproxy.router.openshift.io/timeout: 300s   # cevaplar SSE ile akar
+spec:
+  to:
+    kind: Service
+    name: mlops-chatbot
+  port:
+    targetPort: http
+  tls:
+    termination: edge
+    insecureEdgeTerminationPolicy: Redirect

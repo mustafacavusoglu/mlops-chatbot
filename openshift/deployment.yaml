@@ -1,0 +1,69 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mlops-chatbot
+  annotations:
+    image.openshift.io/triggers: '[{"from":{"kind":"ImageStreamTag","name":"mlops-chatbot:latest"},"fieldPath":"spec.template.spec.containers[?(@.name==\"app\")].image"}]'
+spec:
+  replicas: 1   # Sadece DATABASE_URL postgres ise artır (sqlite + RWO PVC tek pod ister)
+  strategy:
+    type: Recreate   # RWO PVC: eski pod bırakmadan yenisi mount edemez
+  selector:
+    matchLabels:
+      app: mlops-chatbot
+  template:
+    metadata:
+      labels:
+        app: mlops-chatbot
+    spec:
+      serviceAccountName: mlops-chatbot
+      containers:
+        - name: app
+          image: image-registry.openshift-image-registry.svc:5000/<namespace>/mlops-chatbot:latest
+          ports:
+            - containerPort: 8080
+          envFrom:
+            - configMapRef:
+                name: mlops-chatbot-config
+            - secretRef:
+                name: mlops-chatbot-secrets
+          env:
+            - name: OAUTH_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: mlops-chatbot-oauth-token
+                  key: token
+            - name: SSL_CERT_FILE
+              value: /etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem
+          readinessProbe:
+            httpGet: {path: /healthz, port: 8080}
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: {path: /healthz, port: 8080}
+            initialDelaySeconds: 30
+            periodSeconds: 20
+          resources:
+            requests: {cpu: 250m, memory: 512Mi}
+            limits: {cpu: "1", memory: 1Gi}
+          volumeMounts:
+            - {name: config, mountPath: /config}
+            - {name: data, mountPath: /app/data}
+            - name: trusted-ca
+              mountPath: /etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem
+              subPath: ca-bundle.crt
+              readOnly: true
+      volumes:
+        - name: config
+          configMap:
+            name: mlops-chatbot-config
+            items:
+              - {key: sources.yaml, path: sources.yaml}
+        - name: data
+          persistentVolumeClaim:
+            claimName: mlops-chatbot-data
+        - name: trusted-ca
+          configMap:
+            name: mlops-chatbot-trusted-ca
+            items:
+              - {key: ca-bundle.crt, path: ca-bundle.crt}
