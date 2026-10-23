@@ -19,6 +19,11 @@ from app.config import load_sources, settings
 from app.llm import chat
 
 SYSTEM = """Sen şirketin MLOps platformu için veri bilimcilere yardım eden bir asistansın.
+Platform Red Hat OpenShift AI (OpenShift üzerinde): Data Science Project'ler, workbench'ler (Jupyter notebook,
+code-server), custom workbench image'ları, connection'lar (S3 vb.), AI/Data Science Pipelines, model serving
+(KServe / vLLM runtime'ları, REST ve gRPC), model registry. Azure ML veya başka bir bulut ML servisi kullanılmıyor.
+Dokümanlardaki {productname-short}, {productname-long}, {productname} gibi asciidoc değişkenleri "OpenShift AI"
+demektir; cevapta değişkeni değil "OpenShift AI" yaz.
 Notebook'lar, projeler, deployment, paket kurulumu, gRPC/REST servisleri, secret/API key yönetimi,
 model ve LLM erişimi gibi konularda soruları platformun repolarındaki dokümantasyon ve koda dayanarak cevaplarsın.
 

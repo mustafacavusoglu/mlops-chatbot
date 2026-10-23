@@ -28,6 +28,9 @@ spec:
               env:
                 - name: SSL_CERT_FILE
                   value: /etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem
+                # git SSL_CERT_FILE'ı okumaz; on-prem Azure DevOps Server'ın şirket CA'sı için
+                - name: GIT_SSL_CAINFO
+                  value: /etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem
               resources:
                 requests: {cpu: 250m, memory: 512Mi}
                 limits: {cpu: "1", memory: 1Gi}

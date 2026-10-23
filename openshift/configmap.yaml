@@ -29,10 +29,11 @@ data:
   CHATKIT_DOMAIN_KEY: "local-dev"
   WORKERS: "1"
   sources.yaml: |
+    # Şirket içi Azure DevOps Server: https://<sunucu>/<collection>/<project>/_git/<repo>
+    # Alanların açıklaması: sources.example.yaml
     sources:
-      - name: ml-platform
-        url: https://github.com/ORG/ml-platform.git
-        provider: github
+      - name: mlops-platform
+        url: https://azuredevops.sirket.local/DefaultCollection/MLOps/_git/mlops-platform
         branch: main
-        token_env: GITHUB_TOKEN
+        token_env: AZURE_DEVOPS_PAT
         exclude: ["tests/**"]

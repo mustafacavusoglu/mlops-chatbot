@@ -11,17 +11,17 @@ import msgspec
 import msgspec.yaml
 
 DEFAULT_INCLUDE = [
-    "**/*.md", "**/*.ipynb", "**/*.py", "**/*.yaml", "**/*.yml", "**/*.toml", "**/*.cfg",
+    "**/*.md", "**/*.adoc", "**/*.rst", "**/*.ipynb", "**/*.py", "**/*.yaml", "**/*.yml", "**/*.toml", "**/*.cfg",
     "**/*.txt", "**/*.sh", "**/Dockerfile", "**/*.proto", "**/*.json",
 ]
 
 
 class Source(msgspec.Struct, forbid_unknown_fields=True):
-    """İndekslenecek bir git reposu (GitHub veya Azure DevOps)."""
+    """İndekslenecek bir git reposu: Azure DevOps Server (on-prem), Azure DevOps Services veya GitHub."""
 
     name: str  # kısa ad; aramada filtre ve atıf için
     url: str  # https clone adresi
-    provider: str = "github"  # github | azure  (dosyaya web linki üretmek için)
+    provider: str | None = None  # azure | github; boşsa URL'den anlaşılır ("/_git/" -> azure)
     branch: str = "main"
     token_env: str | None = None  # PAT'i tutan ortam değişkeninin ADI (değer Secret'ta)
     include: list[str] = msgspec.field(default_factory=lambda: list(DEFAULT_INCLUDE))

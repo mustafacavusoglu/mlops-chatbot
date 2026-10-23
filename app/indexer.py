@@ -73,7 +73,7 @@ def clean_url(url: str) -> str:
 
 def web_url(src: Source, path: str) -> str:
     base = clean_url(src.url)
-    if src.provider == "azure":
+    if src.provider == "azure" or (src.provider is None and "/_git/" in src.url):
         return f"{base}?path=/{path}&version=GB{src.branch}"
     return f"{base.removesuffix('.git')}/blob/{src.branch}/{path}"
 

@@ -57,6 +57,11 @@ def test_web_url():
     assert web_url(gh, "a/b.md") == "https://github.com/org/repo/blob/dev/a/b.md"
     az = Source(name="r", url="https://tok@dev.azure.com/o/p/_git/r", provider="azure")
     assert web_url(az, "a/b.md") == "https://dev.azure.com/o/p/_git/r?path=/a/b.md&version=GBmain"
+    # on-prem Azure DevOps Server: provider yazılmasa da /_git/ ile anlaşılır
+    onprem = Source(name="r", url="https://tfs.sirket.local/tfs/DefaultCollection/MLOps/_git/platform-docs")
+    assert web_url(onprem, "docs/grpc.md") == (
+        "https://tfs.sirket.local/tfs/DefaultCollection/MLOps/_git/platform-docs?path=/docs/grpc.md&version=GBmain"
+    )
 
 
 if __name__ == "__main__":

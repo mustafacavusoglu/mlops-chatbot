@@ -35,6 +35,9 @@ spec:
                   key: token
             - name: SSL_CERT_FILE
               value: /etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem
+            # git SSL_CERT_FILE'ı okumaz; on-prem Azure DevOps Server'ın şirket CA'sı için
+            - name: GIT_SSL_CAINFO
+              value: /etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem
           readinessProbe:
             httpGet: {path: /healthz, port: 8080}
             initialDelaySeconds: 10

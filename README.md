@@ -1,8 +1,9 @@
 # mlops-chatbot
 
-Veri bilimcilerin MLOps platformu, notebook'ları ve projeleri hakkında soru sorduğu agentic RAG asistanı.
-Şirketin GitHub ve Azure DevOps repolarını indeksler, cevabı bu repolardaki doküman ve koda dayandırır,
-kullandığı dosyaya link verir.
+Veri bilimcilerin **Red Hat OpenShift AI** üzerindeki MLOps platformu, workbench/notebook'ları ve projeleri
+hakkında soru sorduğu agentic RAG asistanı. Şirket içindeki **Azure DevOps Server (on-prem Azure Repos)**
+repolarını indeksler, cevabı bu repolardaki doküman ve koda dayandırır, kullandığı dosyaya link verir.
+GitHub ve Azure DevOps Services repoları da desteklenir.
 
 > *"Projemde gRPC desteğini nasıl açarım?"*, *"Notebook'ta custom package nasıl kurarım?"*,
 > *"Notebook'a API key'i nasıl eklerim?"*, *"Özel LLM modeline erişimi nasıl alırım?"*
@@ -18,7 +19,7 @@ FastAPI ──/chatkit──> ChatKitServer ──arka plan görevi──> LangG
    │                       │                               ├─ agent (LLM, tool calling)
    │                       │                               └─ tools: search_docs (repo filtresiyle)
    │                       └─ Store: SQLite / Postgres (sohbetler, mesajlar)
-   └─/api/admin/reindex──> indexer ──git clone──> GitHub / Azure DevOps ──embedding──> Qdrant
+   └─/api/admin/reindex──> indexer ──git clone──> Azure DevOps Server (on-prem) ──embedding──> Qdrant
                               ▲
               OpenShift CronJob (belirli aralıklarla)
 ```
@@ -103,9 +104,13 @@ cp .env.example .env                       # LLM_*, EMBEDDING_* değerlerini dol
 cp sources.example.yaml sources.yaml       # indekslenecek repolar
 ```
 
+`sources.example.yaml` içindeki `odh-docs` kaynağı OpenShift AI'ın upstream dokümantasyonudur (Open Data
+Hub, public, token istemez). Şirket ağına bağlı değilken denemek için `sources.yaml`'da yalnızca onu
+bırakabilirsin.
+
 ```bash
 set -a; source .env; set +a
-python -m app.indexer                      # repoları indeksle (tek repo: --source azure-mlops-v2)
+python -m app.indexer                      # repoları indeksle (tek repo: --source odh-docs)
 uvicorn app.main:app --reload --port 8000  # http://localhost:8000
 ```
 
@@ -135,7 +140,6 @@ oc create secret generic mlops-chatbot-secrets \
   --from-literal=LLM_API_KEY=... \
   --from-literal=EMBEDDING_API_KEY=... \
   --from-literal=SESSION_SECRET="$(openssl rand -hex 32)" \
-  --from-literal=GITHUB_TOKEN=... \
   --from-literal=AZURE_DEVOPS_PAT=...
 ```
 
@@ -152,7 +156,7 @@ Anahtarların tam listesi `openshift/secret.example.yaml` dosyasında. Gerçek d
 | `LLM_MODEL`, `EMBEDDING_MODEL`, `EMBEDDING_DIM` | kullanılan modeller; `EMBEDDING_DIM` modelin vektör boyutuyla aynı olmalı |
 | `LLM_BASE_URL`, `EMBEDDING_BASE_URL` | şirket içi LLM ucu (ör. vLLM/LiteLLM), gerekirse ekle |
 | `ADMIN_GROUPS` | admin sayılacak OpenShift grupları (virgülle) |
-| `sources.yaml` | indekslenecek GitHub / Azure DevOps repoları |
+| `sources.yaml` | indekslenecek Azure DevOps Server repoları |
 
 Deployment ve CronJob'daki `image-registry.openshift-image-registry.svc:5000/<namespace>/...` alanında da
 `<namespace>`'i değiştir.
@@ -167,9 +171,19 @@ oc apply -k openshift/
 oc start-build mlops-chatbot --follow
 ```
 
-BuildConfig Dockerfile'ı kullanır, imaj ImageStream'e yazılır. Deployment ve CronJob yeni imajı otomatik
-alır (`image.openshift.io/triggers`). Runner'da GitHub'a erişim yoksa lokal klasörden binary build al:
-BuildConfig'te `source: {type: Binary}` yapıp `oc start-build mlops-chatbot --from-dir=. --follow` çalıştır.
+BuildConfig, Dockerfile'ı kullanır ve kaynağı şirket içi Azure DevOps Server'daki bu repodan çeker. Bu
+repoyu oraya mirror'la ve `openshift/buildconfig.yaml` içindeki `uri`'yi kendi adresinle değiştir. Git
+kimliği için PAT'li bir basic-auth secret gerekir; sunucu şirket CA'sıyla imzalıysa `ca.crt` de eklenir:
+
+```bash
+oc create secret generic azure-repos-pat --type=kubernetes.io/basic-auth \
+  --from-literal=username=pat --from-literal=password=<PAT> \
+  --from-file=ca.crt=sirket-ca.pem
+```
+
+İmaj ImageStream'e yazılır. Deployment ve CronJob yeni imajı otomatik alır (`image.openshift.io/triggers`).
+Git'ten build mümkün değilse lokal klasörden binary build al: BuildConfig'te `source: {type: Binary}`
+yapıp `oc start-build mlops-chatbot --from-dir=. --follow` çalıştır.
 
 Şirket içi PyPI mirror'ı (Nexus/Artifactory) ve base imaj için BuildConfig'e `buildArgs` ekle:
 `PIP_INDEX_URL`, `PIP_TRUSTED_HOST`, `BASE_IMAGE`.
@@ -232,24 +246,42 @@ Tüm ayarlar `app/config.py` içinde. Ortam değişkeni adı, alan adının büy
 
 ```yaml
 sources:
-  - name: ml-platform                 # aramada filtre ve atıf adı
-    url: https://github.com/ORG/ml-platform.git
-    provider: github                  # github | azure
+  - name: mlops-platform              # aramada filtre ve atıf adı
+    url: https://azuredevops.sirket.local/DefaultCollection/MLOps/_git/mlops-platform
     branch: main
-    token_env: GITHUB_TOKEN           # token'ı tutan ORTAM DEĞİŞKENİNİN adı (değer Secret'ta)
+    token_env: AZURE_DEVOPS_PAT       # PAT'i tutan ORTAM DEĞİŞKENİNİN adı (değer Secret'ta)
     include: ["docs/**/*.md", "**/*.ipynb", "**/*.py"]
     exclude: ["tests/**"]
-  - name: model-serving
-    url: https://dev.azure.com/<org>/<project>/_git/<repo>
-    provider: azure
-    branch: master
+  - name: workbench-images
+    url: https://azuredevops.sirket.local/DefaultCollection/MLOps/_git/workbench-images
+    branch: develop
     token_env: AZURE_DEVOPS_PAT
 ```
 
-- `include` boş bırakılırsa md, ipynb, py, yaml, toml, Dockerfile, proto gibi varsayılan desenler
+- `provider` yazılmazsa URL'den anlaşılır: `/_git/` geçiyorsa Azure DevOps, değilse GitHub. Kaynak
+  kartlarındaki linkler buna göre üretilir.
+- `include` boş bırakılırsa md, adoc, rst, ipynb, py, yaml, toml, Dockerfile, proto gibi varsayılan desenler
   kullanılır.
 - Notebook'ların markdown ve kod hücreleri indekslenir, çıktılar atılır.
 - Token git'e `http.extraHeader` ile verilir, URL'ye yazılmaz.
+
+### On-prem Azure DevOps Server
+
+- **Adres biçimi:** `https://<sunucu>/<collection>/<project>/_git/<repo>`. Eski TFS kurulumlarında
+  `https://<sunucu>/tfs/<collection>/<project>/_git/<repo>` olur. Adresi repo sayfasındaki **Clone**
+  butonundan kopyala.
+- **PAT:** kullanıcı ayarlarındaki **Personal access tokens** ekranından **Code → Read** yetkisiyle
+  oluştur ve Secret'a `AZURE_DEVOPS_PAT` olarak koy.
+  - Indexer token'ı `git -c http.extraHeader="Authorization: Basic ..."` ile verir; URL'ye ve loglara
+    yazmaz.
+  - Sunucuda PAT ile basic auth açık olmalıdır. Azure DevOps Server 2019 ve sonrasında HTTPS üzerinden
+    varsayılan olarak açıktır.
+  - Birden fazla collection ya da farklı yetki gerekiyorsa her repo için ayrı `token_env` kullan, örneğin
+    `token_env: PAT_DATA_TEAM`, ve değeri Secret'a ekle.
+- **Şirket CA'sı:** git, Python'un okuduğu `SSL_CERT_FILE` değişkenine bakmaz. Bu yüzden Deployment ve
+  CronJob'da `GIT_SSL_CAINFO` da kümenin güvenilir CA paketine (`mlops-chatbot-trusted-ca`) bakar. Şirket
+  CA'sı kümenin `trustedCA` ayarında yoksa paketi kendi `ca.crt`'inle değiştir.
+- **Proxy:** küme çıkışı proxy üzerindeyse Azure DevOps sunucusunu, Qdrant'ı ve LLM ucunu `NO_PROXY`'ye ekle.
 
 ## Önemli: ChatKit'in internet ihtiyacı
 

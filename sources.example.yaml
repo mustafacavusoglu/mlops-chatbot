@@ -1,32 +1,38 @@
 # cp sources.example.yaml sources.yaml
 # OpenShift'te bu içerik configmap.yaml içindeki sources.yaml anahtarındadır.
+#
+# Alanlar:
+#   name        aramada filtre ve atıf adı
+#   url         git clone adresi (https)
+#   provider    azure | github; boşsa URL'den anlaşılır ("/_git/" geçiyorsa azure)
+#   branch      varsayılan main
+#   token_env   PAT'i tutan ORTAM DEĞİŞKENİNİN adı (değer Secret'ta); public repoda gerekmez
+#   include     sadece bu desenler indekslenir (boşsa md, adoc, ipynb, py, yaml, Dockerfile... varsayılanları)
+#   exclude     include'dan sonra çıkarılacaklar
+#   max_file_kb bundan büyük dosyalar atlanır (varsayılan 512)
 sources:
-  # Herkese açık örnek: token gerekmez (hemen denemek için)
-  - name: azure-mlops-v2
-    url: https://github.com/Azure/mlops-v2.git
-    provider: github
+  # Şirket içi Azure DevOps Server (on-prem) reposu
+  #   adres biçimi: https://<sunucu>/<collection>/<project>/_git/<repo>
+  #   eski TFS kurulumlarında:  https://<sunucu>/tfs/<collection>/<project>/_git/<repo>
+  - name: mlops-platform
+    url: https://azuredevops.sirket.local/DefaultCollection/MLOps/_git/mlops-platform
     branch: main
-    include: ["**/*.md"]
-
-  # GitHub reposu; token_env = token'ı tutan ORTAM DEĞİŞKENİNİN adı (değer Secret'ta)
-  - name: ml-platform
-    url: https://github.com/ORG/ml-platform.git
-    provider: github
-    branch: main
-    token_env: GITHUB_TOKEN
-    include:            # sadece bu desenler indekslenir (boşsa varsayılan liste)
-      - "docs/**/*.md"
-      - "**/*.py"
-    exclude:            # include'dan sonra çıkarılacaklar
-      - "tests/**"
-      - "**/*.lock"
-    max_file_kb: 512    # bundan büyük dosyalar atlanır
-
-  # Azure DevOps reposu
-  - name: model-serving
-    url: https://dev.azure.com/<org>/<project>/_git/<repo>
-    provider: azure
-    branch: master
     token_env: AZURE_DEVOPS_PAT
     exclude:
-      - "notebooks/archive/**"
+      - "tests/**"
+      - "**/*.lock"
+
+  - name: workbench-images
+    url: https://azuredevops.sirket.local/DefaultCollection/MLOps/_git/workbench-images
+    branch: develop
+    token_env: AZURE_DEVOPS_PAT
+    include:
+      - "**/*.md"
+      - "**/Dockerfile"
+      - "**/requirements*.txt"
+
+  # Herkese açık örnek (token gerekmez): Open Data Hub = OpenShift AI'ın upstream dokümantasyonu.
+  # Lokalde sistemi hemen denemek için.
+  - name: odh-docs
+    url: https://github.com/opendatahub-io/opendatahub-documentation.git
+    include: ["modules/**/*.adoc", "*.adoc"]

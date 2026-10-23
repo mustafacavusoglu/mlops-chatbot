@@ -1,4 +1,9 @@
-# Git'ten build. Binary build istersen: oc start-build mlops-chatbot --from-dir=. --follow
+# Git'ten build: kaynak şirket içi Azure DevOps Server'daki bu repo (GitHub'dan mirror'lanmış hali).
+# Kimlik: PAT'li basic-auth secret (bir kez; PAT yetkisi Code: Read yeterli):
+#   oc create secret generic azure-repos-pat --type=kubernetes.io/basic-auth \
+#     --from-literal=username=pat --from-literal=password=<PAT> \
+#     --from-file=ca.crt=<sirket-ca.pem>      # sunucu şirket CA'sıyla imzalıysa
+# Binary build istersen: oc start-build mlops-chatbot --from-dir=. --follow
 # (binary için source bölümünü `source: {type: Binary}` yap)
 # Nexus mirror için buildArgs ekle: PIP_INDEX_URL, PIP_TRUSTED_HOST, BASE_IMAGE
 apiVersion: build.openshift.io/v1
@@ -9,8 +14,10 @@ spec:
   source:
     type: Git
     git:
-      uri: https://github.com/mustafacavusoglu/mlops-chatbot.git   # şirket içi git mirror kullanıyorsan değiştir
+      uri: https://azuredevops.sirket.local/DefaultCollection/MLOps/_git/mlops-chatbot   # kendi adresin
       ref: main
+    sourceSecret:
+      name: azure-repos-pat
   strategy:
     type: Docker
     dockerStrategy:
