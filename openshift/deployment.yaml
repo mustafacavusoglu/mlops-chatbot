@@ -5,9 +5,10 @@ metadata:
   annotations:
     image.openshift.io/triggers: '[{"from":{"kind":"ImageStreamTag","name":"mlops-chatbot:latest"},"fieldPath":"spec.template.spec.containers[?(@.name==\"app\")].image"}]'
 spec:
-  replicas: 1   # Sadece DATABASE_URL postgres ise artır (sqlite + RWO PVC tek pod ister)
+  # Sohbetler Postgres'te olduğu için pod sayısı artırılabilir (Route sticky cookie ile kullanıcı aynı poda gider)
+  replicas: 1
   strategy:
-    type: Recreate   # RWO PVC: eski pod bırakmadan yenisi mount edemez
+    type: RollingUpdate
   selector:
     matchLabels:
       app: mlops-chatbot
@@ -28,6 +29,11 @@ spec:
             - secretRef:
                 name: mlops-chatbot-secrets
           env:
+            # Sohbet DB'si: DATABASE_URL Secret'tan (mlops-chatbot-secrets) gelir.
+            # Postgres operator'ü (Crunchy PGO vb.) kullanıcı secret'ı üretiyorsa doğrudan onun `uri`'si verilebilir:
+            # - name: DATABASE_URL
+            #   valueFrom:
+            #     secretKeyRef: {name: <cluster>-pguser-<user>, key: uri}
             - name: OAUTH_CLIENT_SECRET
               valueFrom:
                 secretKeyRef:
@@ -51,7 +57,6 @@ spec:
             limits: {cpu: "1", memory: 1Gi}
           volumeMounts:
             - {name: config, mountPath: /config}
-            - {name: data, mountPath: /app/data}
             - name: trusted-ca
               mountPath: /etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem
               subPath: ca-bundle.crt
@@ -62,9 +67,6 @@ spec:
             name: mlops-chatbot-config
             items:
               - {key: sources.yaml, path: sources.yaml}
-        - name: data
-          persistentVolumeClaim:
-            claimName: mlops-chatbot-data
         - name: trusted-ca
           configMap:
             name: mlops-chatbot-trusted-ca

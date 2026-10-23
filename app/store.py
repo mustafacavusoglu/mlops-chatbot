@@ -51,11 +51,22 @@ def _page(table, user_col, user_id, after_row, order, limit):
     return query.order_by(*keys).limit(limit + 1)
 
 
+def engine_url(url: str) -> str:
+    """OpenShift'teki Postgres secret'larının `uri` değeri (postgresql://...) doğrudan verilebilsin."""
+    scheme, sep, rest = url.partition("://")
+    return f"postgresql+asyncpg://{rest}" if scheme in ("postgres", "postgresql") else url
+
+
 class SqlStore(Store[Context]):
     def __init__(self, url: str = settings.database_url):
+        url = engine_url(url)
         if url.startswith("sqlite"):
             Path(url.split("///", 1)[1]).parent.mkdir(parents=True, exist_ok=True)
-        self.engine = create_async_engine(url, pool_pre_ping=True)
+            self.engine = create_async_engine(url)
+        else:
+            self.engine = create_async_engine(
+                url, pool_pre_ping=True, pool_size=settings.db_pool_size, max_overflow=settings.db_pool_size
+            )
 
     async def setup(self) -> None:
         async with self.engine.begin() as conn:

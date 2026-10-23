@@ -22,9 +22,8 @@ data:
   ADMIN_SAR_RESOURCE: "rolebindings"
   ADMIN_SAR_GROUP: "rbac.authorization.k8s.io"
   SOURCES_FILE: "/config/sources.yaml"
-  # sqlite: tek pod + PVC. Çok pod için Secret'ta postgresql+asyncpg://... DATABASE_URL ver
-  # (envFrom sırası: secret sonra gelir, ConfigMap'i ezer).
-  DATABASE_URL: "sqlite+aiosqlite:////app/data/chat.db"
+  # Sohbet DB'si (Postgres) bağlantısı şifre içerdiği için Secret'ta: DATABASE_URL
+  DB_POOL_SIZE: "10"
   CHATKIT_JS_URL: "https://cdn.platform.openai.com/deployments/chatkit/chatkit.js"
   CHATKIT_DOMAIN_KEY: "local-dev"
   WORKERS: "1"

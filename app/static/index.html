@@ -37,7 +37,7 @@
   .conv-unread { flex: none; width: 8px; height: 8px; border-radius: 50%; background: var(--link); }
   @keyframes spin { to { transform: rotate(360deg); } }
   @media (prefers-reduced-motion: reduce) { .conv-spin { animation-duration: 3s; } }
-  .del { flex: none; width: 28px; height: 28px; margin-right: 4px; border: none; border-radius: 6px; background: none; color: var(--muted); cursor: pointer; opacity: 0; }
+  .del { flex: none; width: 28px; height: 28px; margin-right: 4px; border: none; border-radius: 6px; background: none; color: var(--muted); cursor: pointer; opacity: .35; }
   .row:hover .del, .row[aria-current="true"] .del, .del:focus-visible { opacity: 1; }
   .del:hover { color: var(--error); }
   @media (hover: none) { .del { opacity: 1; } }

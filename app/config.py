@@ -68,8 +68,9 @@ class Settings(msgspec.Struct):
     history_limit: int = 20  # LLM'e giden son mesaj sayısı
     recursion_limit: int = 12  # agent <-> tools döngü sınırı
 
-    # Sohbet deposu: sqlite (tek pod) veya postgres (çok pod)
+    # Sohbet deposu: OpenShift'te Postgres (postgresql://user:pass@host:5432/db), lokalde sqlite
     database_url: str = "sqlite+aiosqlite:///./data/chat.db"
+    db_pool_size: int = 10
 
     # İndeksleme
     sources_file: str = "./sources.yaml"

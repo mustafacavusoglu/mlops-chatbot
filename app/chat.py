@@ -108,6 +108,14 @@ class MLOpsChatServer(ChatKitServer[Context]):
     async def _generate(
         self, thread: ThreadMetadata, message: UserMessageItem, context: Context, queue: asyncio.Queue
     ) -> None:
+        try:
+            await self._answer(thread, message, context, queue)
+        finally:
+            queue.put_nowait(None)  # sohbet silinip görev iptal edilse de bağlı istemcinin stream'i kapanır
+
+    async def _answer(
+        self, thread: ThreadMetadata, message: UserMessageItem, context: Context, queue: asyncio.Queue
+    ) -> None:
         item = AssistantMessageItem(
             id=self.store.generate_item_id("message", thread, context),
             thread_id=thread.id,
@@ -143,7 +151,6 @@ class MLOpsChatServer(ChatKitServer[Context]):
         except Exception:
             log.exception("cevap kaydedilemedi: thread=%s", thread.id)
         queue.put_nowait(ThreadItemDoneEvent(item=item))
-        queue.put_nowait(None)
         # mem0 kaydı birkaç LLM çağrısı sürer; cevabı bekletmez
         # ponytail: pod kapanırsa bitmemiş hafıza kaydı kaybolur; kalıcı olmalıysa kuyruk (arq/celery)
         _spawn(memory.remember(_user_text(message), text, context["user_id"]))

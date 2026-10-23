@@ -18,7 +18,7 @@ FastAPI ──/chatkit──> ChatKitServer ──arka plan görevi──> LangG
    │                       │                               ├─ prepare: mem0 hafıza ∥ Qdrant arama (paralel)
    │                       │                               ├─ agent (LLM, tool calling)
    │                       │                               └─ tools: search_docs (repo filtresiyle)
-   │                       └─ Store: SQLite / Postgres (sohbetler, mesajlar)
+   │                       └─ Store: PostgreSQL (sohbetler, mesajlar)
    └─/api/admin/reindex──> indexer ──git clone──> Azure DevOps Server (on-prem) ──embedding──> Qdrant
                               ▲
               OpenShift CronJob (belirli aralıklarla)
@@ -26,7 +26,14 @@ FastAPI ──/chatkit──> ChatKitServer ──arka plan görevi──> LangG
 
 ## Özellikler
 
-- **ChatGPT benzeri arayüz:** solda sohbet listesi, yeni sohbet, silme, açık/koyu tema (varsayılan açık).
+- **ChatGPT benzeri arayüz:** solda sohbet listesi, yeni sohbet, açık/koyu tema (varsayılan açık).
+- **Sohbet silme:** listede her sohbetin yanında × butonu var, silmeden önce onay ister.
+  - Cevabı hâlâ üretilen bir sohbet silinirse arka plandaki görev durdurulur ve silinen sohbete cevap
+    yazılmaz.
+  - Kullanıcı yalnızca kendi sohbetlerini görebilir ve silebilir. Başkasının ya da olmayan bir sohbet 404
+    döner.
+  - Sohbetten mem0'a öğrenilmiş genel bilgiler (ör. "X projesinde çalışıyor") kullanıcı hafızasında
+    kalır.
   Mobilde ☰ ile açılır.
 - **Bağımsız, asenkron sohbetler:** A sohbetinde soru sorup cevap beklemeden B sohbetine geçip soru
   sorabilirsin.
@@ -73,7 +80,7 @@ app/
   main.py         FastAPI: /chatkit, /api/threads, /api/admin/*, /healthz
   chat.py         ChatKitServer: arka plan görevleriyle bağımsız sohbetler
   agent.py        LangGraph grafiği ve search_docs aracı
-  store.py        ChatKit Store (SQLAlchemy async: sqlite / postgres)
+  store.py        ChatKit Store (SQLAlchemy async: PostgreSQL, lokalde sqlite)
   indexer.py      git clone → parçala → embedding → Qdrant (CLI: python -m app.indexer)
   vectorstore.py  Qdrant koleksiyonu ve arama
   memory.py       mem0 (Qdrant üzerinde)
@@ -140,6 +147,7 @@ oc create secret generic mlops-chatbot-secrets \
   --from-literal=LLM_API_KEY=... \
   --from-literal=EMBEDDING_API_KEY=... \
   --from-literal=SESSION_SECRET="$(openssl rand -hex 32)" \
+  --from-literal=DATABASE_URL='postgresql://chatbot:<sifre>@postgres.db.svc:5432/mlops_chatbot' \
   --from-literal=AZURE_DEVOPS_PAT=...
 ```
 
@@ -233,7 +241,8 @@ Tüm ayarlar `app/config.py` içinde. Ortam değişkeni adı, alan adının büy
 | `MEMORY_ENABLED` | `true` | mem0'ı kapatmak için `false` |
 | `TOP_K`, `CHUNK_SIZE`, `CHUNK_OVERLAP` | `6`, `1500`, `200` | retrieval / parçalama |
 | `HISTORY_LIMIT`, `RECURSION_LIMIT` | `20`, `12` | LLM'e giden geçmiş, agent döngü sınırı |
-| `DATABASE_URL` | sqlite | çok pod için `postgresql+asyncpg://user:pass@host/db` |
+| `DATABASE_URL` | sqlite (lokal) | OpenShift'te **Secret'tan** `postgresql://user:pass@host:5432/db` |
+| `DB_POOL_SIZE` | `10` | pod başına Postgres bağlantı havuzu (+ aynı kadar taşma) |
 | `SOURCES_FILE` | `./sources.yaml` | repo listesi |
 | `INDEX_CONCURRENCY`, `EMBEDDING_CONCURRENCY`, `EMBEDDING_BATCH_SIZE` | `4`, `4`, `64` | paralellik |
 | `AUTH_MODE` | `openshift` | lokalde `dev` |
@@ -300,10 +309,35 @@ Kapalı ağda yapılacaklar:
    doğrulama atlanır, `local-dev` yeterlidir.
 3. Bileşen yüklenemezse arayüz bunu açıklayan bir uyarı gösterir.
 
+## Sohbetler nerede tutuluyor?
+
+Sohbetler ve mesajlar **PostgreSQL**'de, iki tabloda tutulur:
+
+| Tablo | İçerik |
+|---|---|
+| `threads` | sohbet: `id`, `user_id`, `created_at`, `data` (başlık vb. JSON) |
+| `items` | mesaj: `id`, `thread_id`, `user_id`, `created_at`, `data` (soru/cevap ve kaynaklar, JSON) |
+
+- Tablolar ve indeksler uygulama açılırken yoksa oluşturulur. Ayrıca migration gerekmez; DB ve kullanıcının
+  hazır olması yeterli:
+
+  ```sql
+  CREATE USER chatbot WITH PASSWORD '...';
+  CREATE DATABASE mlops_chatbot OWNER chatbot;
+  ```
+
+- Bağlantı Secret'taki `DATABASE_URL` ile verilir. `postgresql://` ile başlayan adres kabul edilir;
+  async sürücü (asyncpg) otomatik seçilir. Şifrede özel karakter varsa URL-encode et (`@` → `%40`,
+  `:` → `%3A`).
+- Postgres operator'ü (Crunchy PGO vb.) kullanıcı secret'ı üretiyorsa, Deployment'ta yorum satırındaki
+  `secretKeyRef` ile o secret'ın `uri` anahtarı doğrudan kullanılabilir.
+- Vektörler (doküman parçaları, mem0 hafızası) Postgres'te değil, Qdrant'tadır.
+- Lokal geliştirmede `DATABASE_URL` verilmezse sqlite (`./data/chat.db`) kullanılır. OpenShift modunda
+  sqlite görülürse uygulama uyarı loglar, çünkü pod yeniden başlayınca sohbetler kaybolur.
+
 ## Ölçek ve sınırlar
 
-- **Tek pod + SQLite** varsayılandır (PVC, `strategy: Recreate`). Birden çok pod için
-  `DATABASE_URL`'i Postgres yap, PVC'yi kaldır ve `replicas`'ı artır.
+- Sohbetler Postgres'te olduğu için pod'lar durumsuzdur, `replicas` artırılabilir. PVC kullanılmaz.
 - "Cevap üretiliyor" göstergesi ve aynı sohbette sıraya koyma pod içidir. Route'un varsayılan sticky
   cookie'si kullanıcıyı aynı poda götürür.
 - Pod tam cevap üretirken kapanırsa o cevap ve bekleyen mem0 kaydı kaybolur. Kalıcı olması gerekirse

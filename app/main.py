@@ -5,7 +5,8 @@ from pathlib import Path
 
 import msgspec
 from chatkit.server import StreamingResult
-from fastapi import Depends, FastAPI, HTTPException, Request, Response
+from chatkit.store import NotFoundError
+from fastapi import Depends, FastAPI, Request, Response
 from fastapi.responses import FileResponse, RedirectResponse, StreamingResponse
 from starlette.middleware.sessions import SessionMiddleware
 
@@ -30,6 +31,8 @@ def to_json(data, status: int = 200) -> Response:
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     await store.setup()
+    if settings.auth_mode == "openshift" and settings.database_url.startswith("sqlite"):
+        log.warning("DATABASE_URL sqlite: pod yeniden başlayınca sohbetler kaybolur, Postgres kullan")
     # Qdrant/mem0 geçici olarak erişilemezse uygulama yine açılsın; arama hatası cevapta görünür
     for name, setup in (("qdrant", vectorstore.setup), ("mem0", memory.setup)):
         try:
@@ -48,6 +51,12 @@ app.add_middleware(
     https_only=settings.auth_mode == "openshift",
 )
 app.include_router(auth.router)
+
+
+@app.exception_handler(NotFoundError)
+async def _not_found(_: Request, exc: NotFoundError) -> Response:
+    # Store sahiplik kontrolü: başkasının ya da silinmiş sohbet -> 404 (500 değil)
+    return to_json({"detail": "Sohbet bulunamadı"}, 404)
 
 
 @app.get("/healthz", include_in_schema=False)
@@ -92,7 +101,12 @@ async def threads(user: User = Depends(require_user)) -> Response:
 
 @app.delete("/api/threads/{thread_id}")
 async def delete_thread(thread_id: str, user: User = Depends(require_user)) -> Response:
-    await store.delete_thread(thread_id, {"user_id": user.name})
+    context = {"user_id": user.name}
+    await store.load_thread(thread_id, context)  # başkasının sohbeti / yok -> 404
+    if task := running.get(thread_id):
+        task.cancel()  # silinen sohbete cevap yazılmasın
+        await asyncio.wait([task], timeout=5)
+    await store.delete_thread(thread_id, context)
     return Response(status_code=204)
 
 
