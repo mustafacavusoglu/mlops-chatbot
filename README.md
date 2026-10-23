@@ -134,76 +134,162 @@ python -m tests.test_auth
 
 ## OpenShift'e kurulum
 
-### 1. Proje ve Secret
+### 0. Önceden hazır olması gerekenler
+
+| Gereken | Not |
+|---|---|
+| `oc` ile kümeye giriş | Namespace içinde admin yetkin olmalı |
+| PostgreSQL | Boş bir DB ve kullanıcı yeterli; tabloları uygulama açılırken kendisi oluşturur (bkz. [Sohbetler nerede tutuluyor?](#sohbetler-nerede-tutuluyor)) |
+| Qdrant | Kümede çalışıyor olmalı; adresi ve varsa API key'i lazım. Yoksa resmi Helm chart'ıyla (`qdrant/qdrant`) kurulabilir |
+| LLM ve embedding ucu | OpenAI uyumlu olmalı, ör. OpenShift AI'da vLLM ile serve edilen model. Adres, model adı ve embedding boyutu lazım |
+| Azure DevOps PAT | **Code → Read** yetkisi yeterli; hem repoları indekslemek hem build için kullanılır |
+| ChatKit erişimi | Kullanıcı tarayıcıları `cdn.platform.openai.com` ve `api.openai.com` adreslerine erişebilmeli; OpenAI Platform'dan domain key alınmalı (bkz. [ChatKit'in internet ihtiyacı](#önemli-chatkitin-internet-ihtiyacı)) |
+
+### 1. Kodu Azure DevOps Server'a koy
+
+Build runner'ları şirket içi git'ten çektiği için repoyu oraya mirror'la:
+
+```bash
+git clone https://github.com/mustafacavusoglu/mlops-chatbot.git && cd mlops-chatbot
+```
+
+```bash
+git remote add azure https://azuredevops.sirket.local/DefaultCollection/MLOps/_git/mlops-chatbot
+```
+
+```bash
+git push azure main
+```
+
+Git'ten build mümkün değilse lokal klasörden binary build alınabilir: BuildConfig'te `source: {type: Binary}`
+yapıp 6. adımda `oc start-build mlops-chatbot --from-dir=. --follow` çalıştır.
+
+### 2. Proje aç ve yer tutucuları doldur
 
 ```bash
 oc new-project mlops-chatbot
 ```
 
 ```bash
-oc create secret generic mlops-chatbot-secrets \
-  --from-literal=QDRANT_URL=http://qdrant.qdrant.svc:6333 \
-  --from-literal=QDRANT_API_KEY=... \
-  --from-literal=LLM_API_KEY=... \
-  --from-literal=EMBEDDING_API_KEY=... \
-  --from-literal=SESSION_SECRET="$(openssl rand -hex 32)" \
-  --from-literal=DATABASE_URL='postgresql://chatbot:<sifre>@postgres.db.svc:5432/mlops_chatbot' \
-  --from-literal=AZURE_DEVOPS_PAT=...
+perl -pi -e 's/<namespace>/mlops-chatbot/g' openshift/*.yaml
 ```
 
-Anahtarların tam listesi `openshift/secret.example.yaml` dosyasında. Gerçek değerleri repoya koyma.
+Ardından dosyalarda şunları kendi değerlerinle değiştir:
 
-### 2. ConfigMap'i düzenle
+- **`openshift/buildconfig.yaml` → `uri`:** 1. adımda push ettiğin repo adresi.
+- **`openshift/configmap.yaml`:**
+  - `LLM_BASE_URL` ve `EMBEDDING_BASE_URL`: yorum satırını aç.
+  - `LLM_MODEL`, `EMBEDDING_MODEL`, `EMBEDDING_DIM`: `EMBEDDING_DIM`, modelin vektör boyutuyla aynı olmalı.
+  - `ADMIN_GROUPS`: admin sayılacak OpenShift grupları (virgülle).
+  - `CHATKIT_DOMAIN_KEY`: OpenAI'dan aldığın domain key.
+  - `sources.yaml`: indekslenecek Azure Repos adresleri (bkz. [Repo listesi](#repo-listesi-sourcesyaml)).
+- **`OAUTH_REDIRECT_URL`:** şimdilik bırak, 5. adımda dolduracağız.
 
-`openshift/configmap.yaml` içinde şunları değiştir:
+Şirket içi PyPI mirror'ı (Nexus/Artifactory) veya farklı bir base imaj kullanılacaksa BuildConfig'e
+`buildArgs` ekle: `PIP_INDEX_URL`, `PIP_TRUSTED_HOST`, `BASE_IMAGE`.
 
-| Anahtar | Değer |
-|---|---|
-| `OAUTH_CLIENT_ID` | `system:serviceaccount:<namespace>:mlops-chatbot` |
-| `OAUTH_REDIRECT_URL` | `https://<route-host>/auth/callback` |
-| `LLM_MODEL`, `EMBEDDING_MODEL`, `EMBEDDING_DIM` | kullanılan modeller; `EMBEDDING_DIM` modelin vektör boyutuyla aynı olmalı |
-| `LLM_BASE_URL`, `EMBEDDING_BASE_URL` | şirket içi LLM ucu (ör. vLLM/LiteLLM), gerekirse ekle |
-| `ADMIN_GROUPS` | admin sayılacak OpenShift grupları (virgülle) |
-| `sources.yaml` | indekslenecek Azure DevOps Server repoları |
+### 3. Secret'ları oluştur
 
-Deployment ve CronJob'daki `image-registry.openshift-image-registry.svc:5000/<namespace>/...` alanında da
-`<namespace>`'i değiştir.
+Uygulamanın kullandığı anahtarlar:
 
-### 3. Uygula ve build al
+```bash
+oc create secret generic mlops-chatbot-secrets \
+  --from-literal=QDRANT_URL=http://qdrant.qdrant.svc:6333 \
+  --from-literal=QDRANT_API_KEY=<qdrant-key> \
+  --from-literal=LLM_API_KEY=<llm-key> \
+  --from-literal=EMBEDDING_API_KEY=<embedding-key> \
+  --from-literal=SESSION_SECRET="$(openssl rand -hex 32)" \
+  --from-literal=DATABASE_URL='postgresql://chatbot:<sifre>@postgres.db.svc:5432/mlops_chatbot' \
+  --from-literal=AZURE_DEVOPS_PAT=<pat>
+```
+
+Build'in git'ten kod çekebilmesi için PAT ve şirket CA'sı:
+
+```bash
+oc create secret generic azure-repos-pat --type=kubernetes.io/basic-auth \
+  --from-literal=username=pat --from-literal=password=<pat> \
+  --from-file=ca.crt=sirket-ca.pem
+```
+
+- Postgres şifresinde `@` veya `:` varsa URL-encode et (`@` → `%40`, `:` → `%3A`).
+- LLM'inde key yoksa `LLM_API_KEY` için herhangi bir değer verebilirsin.
+- Anahtarların tam listesi `openshift/secret.example.yaml` dosyasında. Gerçek değerleri repoya koyma.
+
+### 4. Kaynakları uygula
 
 ```bash
 oc apply -k openshift/
 ```
 
+Bu komut şunları oluşturur: ImageStream, BuildConfig, ServiceAccount (OAuth client olarak kullanılır) ve
+onun token'ı, ConfigMap, güvenilir CA ConfigMap'i, Deployment, Service, Route ve indeksleme CronJob'ı.
+
+### 5. Route adresini OAuth ayarına yaz
+
+Route oluşmadan adresi belli olmuyor, bu yüzden bu adım `apply`'dan sonra:
+
+```bash
+oc get route mlops-chatbot -o jsonpath='{.spec.host}'
+```
+
+Çıkan adresi ConfigMap'e yaz:
+
+```bash
+oc patch configmap mlops-chatbot-config --type merge -p '{"data":{"OAUTH_REDIRECT_URL":"https://<cikan-host>/auth/callback"}}'
+```
+
+Aynı adresi OpenAI Platform'daki domain allowlist ekranına da ekle. İleride `oc apply -k` tekrar
+çalıştırılacaksa `configmap.yaml` içindeki `OAUTH_REDIRECT_URL`'i de bu adresle güncelle; yoksa patch ezilir.
+
+### 6. Build al
+
 ```bash
 oc start-build mlops-chatbot --follow
 ```
 
-BuildConfig, Dockerfile'ı kullanır ve kaynağı şirket içi Azure DevOps Server'daki bu repodan çeker. Bu
-repoyu oraya mirror'la ve `openshift/buildconfig.yaml` içindeki `uri`'yi kendi adresinle değiştir. Git
-kimliği için PAT'li bir basic-auth secret gerekir; sunucu şirket CA'sıyla imzalıysa `ca.crt` de eklenir:
+Build bitince Deployment ve CronJob yeni imajı otomatik alır (`image.openshift.io/triggers`). Pod daha
+önce ayağa kalktıysa, değişen ConfigMap'i okuması için yeniden başlat:
 
 ```bash
-oc create secret generic azure-repos-pat --type=kubernetes.io/basic-auth \
-  --from-literal=username=pat --from-literal=password=<PAT> \
-  --from-file=ca.crt=sirket-ca.pem
+oc rollout restart deployment/mlops-chatbot
 ```
 
-İmaj ImageStream'e yazılır. Deployment ve CronJob yeni imajı otomatik alır (`image.openshift.io/triggers`).
-Git'ten build mümkün değilse lokal klasörden binary build al: BuildConfig'te `source: {type: Binary}`
-yapıp `oc start-build mlops-chatbot --from-dir=. --follow` çalıştır.
-
-Şirket içi PyPI mirror'ı (Nexus/Artifactory) ve base imaj için BuildConfig'e `buildArgs` ekle:
-`PIP_INDEX_URL`, `PIP_TRUSTED_HOST`, `BASE_IMAGE`.
-
-### 4. İlk indeksleme
+### 7. İlk indeksleme
 
 ```bash
 oc create job --from=cronjob/mlops-chatbot-indexer ilk-indeksleme
 ```
 
-Sonraki indekslemeler CronJob'ın `schedule` alanına göre (varsayılan 6 saatte bir) çalışır. Admin'ler
-arayüzden de istediği zaman başlatabilir.
+```bash
+oc logs -f job/ilk-indeksleme
+```
+
+Bundan sonra CronJob her 6 saatte bir çalışır; aralık `openshift/cronjob-indexer.yaml` içindeki
+`schedule` alanında. Admin'ler arayüzdeki **⚙ İndeksleme** panelinden istediği zaman da başlatabilir.
+
+### 8. Kontrol
+
+```bash
+oc get pods
+```
+
+```bash
+oc logs deployment/mlops-chatbot
+```
+
+Route adresini tarayıcıda aç. OpenShift giriş ekranı gelmeli, giriş yapınca sohbet ekranı açılmalı.
+Admin'sen sol altta "Admin" etiketi ve İndeksleme butonu görünür.
+
+### Sık karşılaşılabilecek sorunlar
+
+| Belirti | Sebep / çözüm |
+|---|---|
+| Girişte `redirect_uri` hatası | `OAUTH_REDIRECT_URL` Route adresiyle birebir aynı değil (https ve `/auth/callback` dahil) |
+| Pod açılmıyor: `SESSION_SECRET ayarlanmalı` | Secret'ta `SESSION_SECRET` eksik |
+| Sohbet ekranı boş ve uyarı çıkıyor | Tarayıcı OpenAI CDN'ine erişemiyor ya da domain key yanlış |
+| İndekslemede `git clone başarısız` | PAT yetkisi yetersiz ya da sertifika hatası: şirket CA'sı kümenin trustedCA ayarında değil (bkz. [On-prem Azure DevOps Server](#on-prem-azure-devops-server)) |
+| Admin görünmüyor | Kullanıcı `ADMIN_GROUPS` içindeki grupta değil ya da namespace'te admin değil. Yetki değişince çıkış yapıp tekrar gir |
+| Postgres'e bağlanamıyor | `DATABASE_URL` yanlış veya şifre URL-encode edilmemiş; NetworkPolicy DB namespace'ine erişimi engelliyor olabilir |
 
 ### OpenShift girişi nasıl çalışıyor?
 
