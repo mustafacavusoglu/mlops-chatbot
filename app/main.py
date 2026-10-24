@@ -1,5 +1,6 @@
 import asyncio
 import logging
+from datetime import datetime
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -102,6 +103,11 @@ async def threads(user: User = Depends(require_user)) -> Response:
     ])
 
 
+@app.get("/api/threads/{thread_id}/feedback")
+async def thread_feedback(thread_id: str, user: User = Depends(require_user)) -> Response:
+    return to_json(await store.thread_feedback(thread_id, {"user_id": user.name}))
+
+
 @app.delete("/api/threads/{thread_id}")
 async def delete_thread(thread_id: str, user: User = Depends(require_user)) -> Response:
     context = {"user_id": user.name}
@@ -130,6 +136,23 @@ async def reindex(source: str | None = None, user: User = Depends(require_admin)
 @app.get("/api/admin/index-status")
 def index_status(_: User = Depends(require_admin)) -> Response:
     return to_json(indexer.status)
+
+
+@app.get("/api/admin/feedback")
+async def admin_feedback(kind: str = "negative", limit: int = 50, _: User = Depends(require_admin)) -> Response:
+    kind = None if kind == "all" else kind
+    return to_json(await store.feedback_rows(kind, min(limit, 500)))
+
+
+@app.get("/api/admin/export.jsonl")
+async def export(_: User = Depends(require_admin)) -> StreamingResponse:
+    async def lines():
+        async for row in store.export_traces():
+            yield msgspec.json.encode(row) + b"\n"
+    name = f"mlops-chatbot-traces-{datetime.now():%Y%m%d-%H%M}.jsonl"
+    return StreamingResponse(
+        lines(), media_type="application/x-ndjson", headers={"Content-Disposition": f'attachment; filename="{name}"'}
+    )
 
 
 @app.get("/api/admin/sources")

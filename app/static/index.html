@@ -67,6 +67,18 @@
   table { border-collapse: collapse; width: 100%; font-size: 13px; }
   th, td { border: 1px solid var(--border); padding: 5px 8px; text-align: left; vertical-align: top; }
   td.err { color: var(--error); }
+  .tabs { display: flex; gap: 6px; margin: 0 0 12px; flex-wrap: wrap; }
+  .btn.on { background: var(--accent); color: var(--accent-fg); border-color: var(--accent); }
+  .fb-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-bottom: 8px; }
+  .fb-bar .gap { flex: 1; }
+  .fb-card { margin-top: 10px; padding: 10px 12px; border: 1px solid var(--border); border-radius: 10px; font-size: 13px; overflow-wrap: anywhere; }
+  .fb-head { display: flex; flex-wrap: wrap; gap: 4px 10px; color: var(--muted); }
+  .fb-q { margin: 6px 0 4px; font-weight: 600; font-size: 14px; }
+  .fb-a { white-space: pre-wrap; }
+  .fb-a.clamp { display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+  .fb-more { margin: 2px 0 0; padding: 0; border: none; background: none; color: var(--link); cursor: pointer; font-size: 13px; }
+  .fb-q2 { margin-top: 6px; color: var(--muted); }
+  .fb-hit { display: block; margin-left: 10px; }
   .box-foot { display: flex; justify-content: flex-end; margin-top: 14px; }
 
   /* Yerel (native) sohbet paneli */
@@ -99,6 +111,10 @@
   .source:hover { background: var(--surface); }
   .source-name { font-weight: 600; overflow-wrap: anywhere; }
   .source-meta { color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .actions { display: flex; gap: 4px; margin-top: 10px; }
+  .fb { width: 32px; height: 32px; border: 1px solid transparent; border-radius: 8px; background: none; font-size: 16px; line-height: 1; cursor: pointer; opacity: .55; }
+  .fb:hover { background: var(--surface); opacity: 1; }
+  .fb.on { background: var(--accent); opacity: 1; filter: none; }
   #nempty { padding-top: 8vh; text-align: center; }
   #nempty h2 { margin: 0 0 24px; font-size: 22px; font-weight: 600; }
   .chips { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
@@ -125,7 +141,7 @@
   <div class="brand">MLOps Asistanı</div>
   <button class="btn" id="newchat" type="button">+ Yeni sohbet</button>
   <div id="list"></div>
-  <button class="btn" id="adminBtn" type="button" hidden>⚙ İndeksleme</button>
+  <button class="btn" id="adminBtn" type="button" hidden>⚙ Yönetim</button>
   <div class="side-foot">
     <span class="avatar" id="avatar" aria-hidden="true"></span>
     <span id="who"></span>
@@ -157,13 +173,30 @@
 
 <div id="modal" hidden>
   <div class="box" role="dialog" aria-modal="true" aria-labelledby="mtitle">
-    <h2 id="mtitle">Kaynak indeksleme</h2>
+    <h2 id="mtitle">Yönetim</h2>
+    <div class="tabs" role="tablist">
+      <button class="btn" id="tabBtnIdx" type="button" role="tab">İndeksleme</button>
+      <button class="btn" id="tabBtnFb" type="button" role="tab">Geri bildirimler</button>
+    </div>
+    <div id="tabIdx">
     <div class="srcs" id="srcs"></div>
     <div class="meta" id="imeta"></div>
     <div class="tbl"><table>
       <thead><tr><th>Kaynak</th><th>İndekslenen</th><th>Atlanan</th><th>Silinen</th><th>Parça</th><th>Hata</th></tr></thead>
       <tbody id="itbody"></tbody>
     </table></div>
+    </div>
+    <div id="tabFb" hidden>
+      <div class="fb-bar" id="fbFilter">
+        <button class="btn" type="button" data-k="negative">👎 Olumsuz</button>
+        <button class="btn" type="button" data-k="positive">👍 Olumlu</button>
+        <button class="btn" type="button" data-k="all">Tümü</button>
+        <span class="gap"></span>
+        <a class="btn" href="/api/admin/export.jsonl" download>JSONL indir</a>
+      </div>
+      <div class="meta">Dosya; soru, cevap, arama sorguları ile getirilen parçalar ve skorları, ayrıca geri bildirimi içerir. Notebook'ta analiz için.</div>
+      <div id="fbList"></div>
+    </div>
     <div class="box-foot"><button class="btn" id="mclose" type="button">Kapat</button></div>
   </div>
 </div>
@@ -377,6 +410,7 @@
 
   // ---- Yerel sohbet paneli (ChatKit protokolü, CDN yok) ----
   const live = new Map();   // sohbet id (veya geçici anahtar) -> {text, parts, progress, sources, error, done, userText, ctrl}
+  let fbMap = {};   // aktif sohbetin oyları: item id -> positive|negative
   let loaded = [], loadErr = false, viewTmp = null, tmpSeq = 0;
   const ERR_MSG = "Cevap alınamadı, tekrar dener misin?";
   const PROMPTS = [
@@ -441,7 +475,7 @@
     }
   }
 
-  function aNode(text, sources) {
+  function aNode(text, sources, itemId) {
     const m = mk("div", "msg assistant");
     const b = m.appendChild(mk("div", "bubble"));
     renderMd(b, text);
@@ -455,7 +489,30 @@
         a.append(mk("div", "source-name", s.title), mk("div", "source-meta", s.url));
       }
     }
+    if (itemId) m.append(fbRow(itemId));
     return m;
+  }
+  // Kayıtlı cevap altında 👍/👎; oy yoksa geri alma yok (protokol)
+  function fbRow(id) {
+    const row = mk("div", "actions"), btns = {}, map = fbMap, tid = activeId;
+    const paint = () => { for (const k in btns) { btns[k].classList.toggle("on", map[id] === k); btns[k].ariaPressed = String(map[id] === k); } };
+    for (const [kind, ic, label] of [["positive", "👍", "Faydalı"], ["negative", "👎", "Faydalı değil"]]) {
+      const b = btns[kind] = row.appendChild(mk("button", "fb", ic));
+      b.type = "button"; b.title = b.ariaLabel = label;
+      b.onclick = async () => {
+        const prev = map[id];
+        if (prev === kind) return;
+        map[id] = kind; paint();
+        try {
+          const r = await rpc({ type: "items.feedback", params: { thread_id: tid, item_ids: [id], kind } });
+          if (!r.ok) throw new Error(r.status);
+        } catch (e) {
+          if (map[id] === kind) { if (prev) map[id] = prev; else delete map[id]; paint(); }
+        }
+      };
+    }
+    paint();
+    return row;
   }
   function uNode(text) {
     const m = mk("div", "msg user");
@@ -487,7 +544,7 @@
     } else {
       for (const it of loaded) {
         if (it.type === "user_message") box.append(uNode(itemText(it)));
-        else if (it.type === "assistant_message") box.append(aNode(itemText(it), itemSources(it)));
+        else if (it.type === "assistant_message") box.append(aNode(itemText(it), itemSources(it), it.id));
       }
       if (loadErr) box.append(mk("div", "nerr", "Sohbet yüklenemedi."));
       box.append(Object.assign(mk("div", ""), { id: "ntail" }));
@@ -532,7 +589,9 @@
 
   async function loadItems(id) {
     const items = [];
-    let after = null;
+    let after = null, fb = {};
+    // oylar items.list ile paralel; hata olursa oysuz devam
+    const fbP = api(`/api/threads/${encodeURIComponent(id)}/feedback`).then((r) => (r.ok ? r.json() : {})).catch(() => ({}));
     try {
       for (let i = 0; i < 10; i++) {
         const r = await rpc({ type: "items.list", params: { thread_id: id, limit: 200, order: "asc", ...(after ? { after } : {}) } });
@@ -551,7 +610,9 @@
       loadErr = true; renderAll(true);
       return;
     }
+    fb = await fbP;
     if (id !== activeId) return;
+    fbMap = fb && typeof fb === "object" ? fb : {};
     loaded = items; loadErr = false;
     renderAll(false);
   }
@@ -560,7 +621,7 @@
     setDrawer(false);
     setActive(id);
     viewTmp = null;
-    loaded = []; loadErr = false;
+    loaded = []; loadErr = false; fbMap = {};
     renderAll(true);
     if (id) {
       await loadItems(id);
@@ -673,6 +734,67 @@
   // ---- Admin paneli ----
   let admTimer = null;
   const fmt = (v) => (v ? new Date(v).toLocaleString("tr") : "-");
+  let fbKind = "negative", fbSeq = 0;
+  function showTab(t) {
+    const idx = t === "idx";
+    $("tabIdx").hidden = !idx; $("tabFb").hidden = idx;
+    $("tabBtnIdx").classList.toggle("on", idx); $("tabBtnFb").classList.toggle("on", !idx);
+    for (const b of $("fbFilter").querySelectorAll("button")) b.classList.toggle("on", b.dataset.k === fbKind);
+    clearTimeout(admTimer);
+    if (idx) pollStatus(); else loadFb();
+  }
+  $("tabBtnIdx").onclick = () => showTab("idx");
+  $("tabBtnFb").onclick = () => showTab("fb");
+  for (const b of $("fbFilter").querySelectorAll("button")) b.onclick = () => { fbKind = b.dataset.k; showTab("fb"); };
+
+  function fbCard(x) {
+    const c = mk("div", "fb-card");
+    const h = c.appendChild(mk("div", "fb-head"));
+    h.append(mk("span", "", x.kind === "positive" ? "👍" : "👎"), mk("span", "", fmt(x.created_at)), mk("span", "", x.user_id || "-"));
+    c.append(mk("div", "fb-q", x.question || "(soru kaydı yok)"));
+    const ans = x.answer || "";
+    const a = c.appendChild(mk("div", "fb-a", ans || "(cevap kaydı yok)"));
+    if (ans.length > 200 || ans.split("\n").length > 3) {
+      a.classList.add("clamp");
+      const m = c.appendChild(mk("button", "fb-more", "Devamı"));
+      m.type = "button";
+      m.onclick = () => { m.textContent = a.classList.toggle("clamp") ? "Devamı" : "Daralt"; };
+    }
+    const cited = new Set(x.cited || []);
+    for (const q of x.searches || []) {
+      c.append(mk("div", "fb-q2", `Arama: ${q.query}${q.repo ? ` (${q.repo})` : ""}`));
+      for (const hit of q.hits || []) {
+        const row = c.appendChild(mk("span", "fb-hit"));
+        const name = `${hit.repo}/${hit.path}`;
+        if (/^https?:\/\//i.test(hit.url || "")) {
+          const l = row.appendChild(mk("a", "", name));
+          l.href = hit.url; l.target = "_blank"; l.rel = "noopener noreferrer";
+        } else row.append(mk("span", "", name));
+        row.append(mk("span", "meta", ` ${Number(hit.score).toFixed(2)}${cited.has(hit.url) ? " ✓ atıf" : ""}`));
+      }
+    }
+    const meta = [x.model, x.latency_ms != null && `${(x.latency_ms / 1000).toFixed(1)} sn`].filter(Boolean).join(" · ");
+    if (meta) c.append(mk("div", "meta", meta));
+    return c;
+  }
+  async function loadFb() {
+    const n = ++fbSeq, list = $("fbList");
+    list.replaceChildren(mk("div", "meta", "Yükleniyor…"));
+    let rows;
+    try {
+      const r = await api(`/api/admin/feedback?kind=${fbKind}&limit=50`);
+      if (!r.ok) throw new Error(r.status);
+      rows = await r.json();
+    } catch (e) {
+      if (n === fbSeq && e.message !== "401") list.replaceChildren(mk("div", "meta", "Geri bildirimler alınamadı."));
+      return;
+    }
+    if (n !== fbSeq) return;
+    list.replaceChildren();
+    if (!rows.length) list.append(mk("div", "meta", "Henüz geri bildirim yok"));
+    for (const x of rows) list.append(fbCard(x));
+  }
+
   function closeModal() { $("modal").hidden = true; clearTimeout(admTimer); }
   $("mclose").onclick = closeModal;
   $("modal").onclick = (e) => { if (e.target === $("modal")) closeModal(); };
@@ -687,7 +809,7 @@
   }
   async function pollStatus() {
     clearTimeout(admTimer);
-    if ($("modal").hidden) return;
+    if ($("modal").hidden || $("tabIdx").hidden) return;
     let running = false;
     try {
       const r = await api("/api/admin/index-status");
@@ -703,10 +825,11 @@
       }
       if (!body.children.length) body.append(Object.assign(mk("td", "", "Henüz sonuç yok"), { colSpan: 6 }));
     } catch (e) { if (e.message !== "401") $("imeta").textContent = "Durum alınamadı."; }
-    admTimer = setTimeout(pollStatus, running ? 2000 : 10000);
+    if (!$("tabIdx").hidden) admTimer = setTimeout(pollStatus, running ? 2000 : 10000);
   }
   async function openAdmin() {
     $("modal").hidden = false;
+    showTab("idx");
     const box = $("srcs");
     box.replaceChildren();
     const all = box.appendChild(mk("button", "btn", "Tümünü indeksle"));
@@ -721,7 +844,6 @@
         b.onclick = () => reindex(s.name);
       }
     } catch (e) { if (e.message !== "401") box.append(mk("span", "meta", "Kaynaklar alınamadı.")); }
-    pollStatus();
   }
 
   // ---- Başlangıç ----

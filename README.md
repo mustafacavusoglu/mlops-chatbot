@@ -27,13 +27,15 @@ FastAPI ──/chatkit──> ChatKitServer ──arka plan görevi──> LangG
 ## Özellikler
 
 - **ChatGPT benzeri arayüz:** solda sohbet listesi, yeni sohbet, açık/koyu tema (varsayılan açık).
+- **Geri bildirim:** cevapların altında 👍/👎; admin'ler oyları ve her cevabın arama izini panelden görür,
+  JSONL olarak indirip notebook'ta analiz eder (bkz. [RAG kalitesini inceleme](#rag-kalitesini-inceleme)).
 - **Sohbet silme:** listede her sohbetin yanında × butonu var, silmeden önce onay ister.
   - Cevabı hâlâ üretilen bir sohbet silinirse arka plandaki görev durdurulur ve silinen sohbete cevap
     yazılmaz.
   - Kullanıcı yalnızca kendi sohbetlerini görebilir ve silebilir. Başkasının ya da olmayan bir sohbet 404
     döner.
   - Sohbetten mem0'a öğrenilmiş genel bilgiler (ör. "X projesinde çalışıyor") kullanıcı hafızasında
-    kalır.
+    kalır. Cevap izleri ve oylar da analiz için kalır.
   Mobilde ☰ ile açılır.
 - **Bağımsız, asenkron sohbetler:** A sohbetinde soru sorup cevap beklemeden B sohbetine geçip soru
   sorabilirsin.
@@ -48,7 +50,7 @@ FastAPI ──/chatkit──> ChatKitServer ──arka plan görevi──> LangG
   projenin admin'leri. Yetki SelfSubjectAccessReview ile sorulur.
 - **İndeksleme:**
   - Belirli aralıklarla OpenShift CronJob'ı çalışır.
-  - Manuel indeksleme için admin'ler arayüzdeki **⚙ İndeksleme** panelinden tüm repoları ya da tek repoyu
+  - Manuel indeksleme için admin'ler arayüzdeki **⚙ Yönetim** panelinden tüm repoları ya da tek repoyu
     başlatır ve durumu canlı izler.
   - İndeksleme artımlıdır: dosya hash'i değişmediyse yeniden embedding yapılmaz, silinen dosyaların
     parçaları Qdrant'tan da silinir.
@@ -265,7 +267,7 @@ oc logs -f job/ilk-indeksleme
 ```
 
 Bundan sonra CronJob her 6 saatte bir çalışır; aralık `openshift/cronjob-indexer.yaml` içindeki
-`schedule` alanında. Admin'ler arayüzdeki **⚙ İndeksleme** panelinden istediği zaman da başlatabilir.
+`schedule` alanında. Admin'ler arayüzdeki **⚙ Yönetim** panelinden istediği zaman da başlatabilir.
 
 ### 8. Kontrol
 
@@ -406,12 +408,14 @@ Vendor dosyalarının sürümleri: `marked` 18.0.13 (MIT), `DOMPurify` 3.4.15 (A
 
 ## Sohbetler nerede tutuluyor?
 
-Sohbetler ve mesajlar **PostgreSQL**'de, iki tabloda tutulur:
+Her şey **PostgreSQL**'de, dört tabloda tutulur:
 
-| Tablo | İçerik |
-|---|---|
-| `threads` | sohbet: `id`, `user_id`, `created_at`, `data` (başlık vb. JSON) |
-| `items` | mesaj: `id`, `thread_id`, `user_id`, `created_at`, `data` (soru/cevap ve kaynaklar, JSON) |
+| Tablo | İçerik | Sohbet silinince |
+|---|---|---|
+| `threads` | sohbet: `id`, `user_id`, `created_at`, `data` (başlık vb. JSON) | silinir |
+| `items` | mesaj: `id`, `thread_id`, `user_id`, `created_at`, `data` (soru/cevap ve kaynak kartları, JSON) | silinir |
+| `traces` | her cevabın izi: soru, cevap, agent'ın yaptığı **her arama** (sorgu, repo filtresi, gelen parçalar, metinleri ve skorları), atıf yapılan dosyalar, model, toplam süre ve ilk token süresi, hata | **kalır** |
+| `feedback` | 👍/👎: hangi cevap, kim, ne zaman. Kullanıcı başına cevap başına bir oy; yeniden oy öncekini ezer | **kalır** |
 
 - Tablolar ve indeksler uygulama açılırken yoksa oluşturulur. Ayrıca migration gerekmez; DB ve kullanıcının
   hazır olması yeterli:
@@ -429,6 +433,51 @@ Sohbetler ve mesajlar **PostgreSQL**'de, iki tabloda tutulur:
 - Vektörler (doküman parçaları, mem0 hafızası) Postgres'te değil, Qdrant'tadır.
 - Lokal geliştirmede `DATABASE_URL` verilmezse sqlite (`./data/chat.db`) kullanılır. OpenShift modunda
   sqlite görülürse uygulama uyarı loglar, çünkü pod yeniden başlayınca sohbetler kaybolur.
+
+## RAG kalitesini inceleme
+
+Kullanıcılar cevapların altındaki 👍/👎 ile oy verir; ChatKit modunda ChatKit'in kendi butonları aynı isteği
+gönderir. Her cevabın izi (`traces`) ayrıca otomatik kaydedilir, yani oy verilmeyen cevaplar da incelenebilir.
+
+- **Admin paneli:** **⚙ Yönetim → Geri bildirimler** sekmesi 👎/👍 cevapları listeler. Her satırda soru,
+  cevap, agent'ın yaptığı aramalar, gelen dosyalar ve skorları görünür; atıf yapılan dosyalar "✓ atıf"
+  ile işaretlidir.
+- **Toplu analiz:** aynı sekmedeki **JSONL indir** (`/api/admin/export.jsonl`) tüm izleri oylarıyla birlikte
+  indirir. Dosya bir OpenShift AI workbench'inde doğrudan açılabilir:
+
+  ```python
+  import pandas as pd
+
+  df = pd.read_json("mlops-chatbot-traces.jsonl", lines=True)
+  df["top_score"] = df.searches.apply(lambda s: max((h["score"] for x in s for h in x["hits"]), default=0))
+  df["n_search"] = df.searches.str.len()
+
+  df.groupby("feedback")[["top_score", "n_search", "latency_ms"]].mean()   # 👎 cevaplarda skor düşük mü?
+  df[(df.feedback == "negative") & (df.top_score < 0.6)][["question"]]      # dokümanı eksik konular
+  ```
+
+Bakılacak sinyaller:
+
+| Sinyal | Ne anlama gelir | Ne yapılır |
+|---|---|---|
+| 👎 ve en yüksek skor düşük | Bu konuda doküman yok ya da bulunamıyor | Repoya doküman ekle, `include` desenlerini genişlet |
+| 👎 ama skor yüksek ve atıf var | Doğru doküman geldi, cevap yine kötü | Prompt'u veya modeli gözden geçir; doküman güncel mi bak |
+| İlk aramanın (ham soru) skoru, agent'ın yeniden yazdığı sorgudan çok düşük | Ham soru embedding'e uygun değil | Sorgu yeniden yazma adımı ekle, `EMBEDDING_QUERY_PREFIX`'i dene |
+| Aynı dosya çok sık geliyor ama hiç atıf yok | Parça gürültü üretiyor | `exclude` ile çıkar veya `CHUNK_SIZE`'ı küçült |
+| `n_search` yüksek | Agent ilk aramada bulamıyor, tekrar tekrar arıyor | `TOP_K`'yı artır, chunking'i gözden geçir |
+
+SQL ile doğrudan da bakılabilir:
+
+```sql
+SELECT f.kind, t.question, t.cited, t.latency_ms
+FROM feedback f JOIN traces t USING (item_id)
+WHERE f.kind = 'negative'
+ORDER BY f.created_at DESC;
+```
+
+**Gizlilik:** `traces` ve `feedback`, kullanıcı sohbeti silse de analiz için kalır ve kullanıcı adı içerir.
+Şirketin KVKK / veri saklama politikası belli bir süre sonra silmeyi gerektiriyorsa bunu Postgres'te
+zamanlanmış bir sorguyla yap, örneğin `DELETE FROM traces WHERE created_at < now() - interval '180 days'`.
 
 ## Ölçek ve sınırlar
 

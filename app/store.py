@@ -2,14 +2,24 @@
 
 Her kayıt pydantic JSON olarak `data` kolonunda; sorgu için gereken alanlar ayrı kolon.
 Tüm sorgular `user_id` ile süzülür: kullanıcı yalnızca kendi sohbetlerini görür.
+
+Analiz için iki tablo daha (sohbet silinse de kalır):
+  traces   her cevabın izi: soru, cevap, arama sorguları + gelen parçalar/skorlar, atıflar, süre, model
+  feedback 👍/👎 (kullanıcı başına cevap başına bir oy; tekrar oy öncekini ezer)
 """
 
+from collections.abc import AsyncIterator
+from datetime import datetime
 from pathlib import Path
+
+import msgspec
 
 from chatkit.store import NotFoundError, Store
 from chatkit.types import Attachment, Page, ThreadItem, ThreadMetadata
 from pydantic import TypeAdapter
-from sqlalchemy import Column, DateTime, Index, MetaData, String, Table, Text, and_, delete, insert, or_, select, update
+from sqlalchemy import (
+    Boolean, Column, DateTime, Index, Integer, MetaData, String, Table, Text, and_, delete, insert, or_, select, update,
+)
 from sqlalchemy.ext.asyncio import create_async_engine
 
 from app.config import settings
@@ -35,7 +45,43 @@ items = Table(
     Index("ix_items_thread_created", "thread_id", "created_at"),
 )
 
+traces = Table(
+    "traces", _meta,
+    Column("item_id", String(64), primary_key=True),
+    Column("thread_id", String(64), nullable=False),
+    Column("user_id", String(255), nullable=False),
+    Column("created_at", DateTime, nullable=False, index=True),
+    Column("question", Text, nullable=False),
+    Column("answer", Text, nullable=False),
+    Column("searches", Text, nullable=False),  # JSON: [{query, repo, hits: [{repo, path, url, score, chunk, text}]}]
+    Column("cited", Text, nullable=False),  # JSON: cevabın altında kaynak olarak gösterilen url'ler
+    Column("model", String(255), nullable=False),
+    Column("latency_ms", Integer, nullable=False),
+    Column("first_token_ms", Integer),
+    Column("error", Boolean, nullable=False, default=False),
+)
+feedback = Table(
+    "feedback", _meta,
+    Column("item_id", String(64), primary_key=True),
+    Column("thread_id", String(64), nullable=False),
+    Column("user_id", String(255), nullable=False),
+    Column("kind", String(16), nullable=False),  # positive | negative
+    Column("created_at", DateTime, nullable=False, index=True),
+)
+
 _item_adapter = TypeAdapter(ThreadItem)
+_JSON = ("searches", "cited")
+
+
+def _trace_row(row) -> dict:
+    out = dict(row._mapping)
+    for key in _JSON:
+        if out.get(key) is not None:
+            out[key] = msgspec.json.decode(out[key])
+    for key in ("created_at", "feedback_at"):
+        if isinstance(out.get(key), datetime):
+            out[key] = out[key].isoformat()
+    return out
 
 
 def _page(table, user_col, user_id, after_row, order, limit):
@@ -154,6 +200,57 @@ class SqlStore(Store[Context]):
                     items.c.id == item_id, items.c.thread_id == thread_id, items.c.user_id == context["user_id"]
                 )
             )
+
+    # --- analiz: trace + feedback
+    async def save_trace(self, row: dict) -> None:
+        row = {**row, **{k: msgspec.json.encode(row[k]).decode() for k in _JSON}}
+        async with self.engine.begin() as conn:
+            await conn.execute(insert(traces).values(**row))
+
+    async def save_feedback(self, thread_id: str, item_ids: list[str], kind: str, context: Context) -> None:
+        for item_id in item_ids:
+            await self.load_item(thread_id, item_id, context)  # sahiplik: başkasının cevabına oy yok -> 404
+            row = {"item_id": item_id, "thread_id": thread_id, "user_id": context["user_id"],
+                   "kind": kind, "created_at": datetime.now()}
+            async with self.engine.begin() as conn:
+                result = await conn.execute(
+                    update(feedback).where(feedback.c.item_id == item_id)
+                    .values(kind=kind, created_at=row["created_at"])
+                )
+                if result.rowcount == 0:
+                    await conn.execute(insert(feedback).values(**row))
+
+    async def thread_feedback(self, thread_id: str, context: Context) -> dict[str, str]:
+        async with self.engine.connect() as conn:
+            rows = await conn.execute(
+                select(feedback.c.item_id, feedback.c.kind)
+                .where(feedback.c.thread_id == thread_id, feedback.c.user_id == context["user_id"])
+            )
+            return {r.item_id: r.kind for r in rows}
+
+    async def feedback_rows(self, kind: str | None, limit: int) -> list[dict]:
+        query = (
+            select(feedback, traces.c.question, traces.c.answer, traces.c.searches, traces.c.cited,
+                   traces.c.model, traces.c.latency_ms)
+            .select_from(feedback.outerjoin(traces, traces.c.item_id == feedback.c.item_id))
+            .order_by(feedback.c.created_at.desc())
+            .limit(limit)
+        )
+        if kind:
+            query = query.where(feedback.c.kind == kind)
+        async with self.engine.connect() as conn:
+            return [_trace_row(r) for r in await conn.execute(query)]
+
+    async def export_traces(self) -> AsyncIterator[dict]:
+        """Tüm cevap izleri + varsa oy; notebook'ta analiz için (JSONL)."""
+        query = (
+            select(traces, feedback.c.kind.label("feedback"), feedback.c.created_at.label("feedback_at"))
+            .select_from(traces.outerjoin(feedback, feedback.c.item_id == traces.c.item_id))
+            .order_by(traces.c.created_at)
+        )
+        async with self.engine.connect() as conn:
+            async for row in await conn.stream(query):
+                yield _trace_row(row)
 
     # --- ek dosya: arayüzde kapalı
     async def save_attachment(self, attachment: Attachment, context: Context) -> None:

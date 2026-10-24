@@ -7,6 +7,7 @@ yerindedir. Farklı sohbetler birbirini beklemez; aynı sohbette yeni soru önce
 
 import asyncio
 import logging
+import time
 from collections.abc import AsyncIterator
 from datetime import datetime
 
@@ -95,6 +96,25 @@ class MLOpsChatServer(ChatKitServer[Context]):
         while (event := await queue.get()) is not None:
             yield event
 
+    async def add_feedback(self, thread_id, item_ids, feedback, context) -> None:
+        await self.store.save_feedback(thread_id, item_ids, feedback, context)
+
+    async def _trace(self, item, message, text, searches, annotations, started, first_token, failed, context) -> None:
+        """RAG'i iyileştirmek için cevabın izi: hangi sorgularla ne geldi, skorlar, neye atıf yapıldı, ne kadar sürdü."""
+        await self.store.save_trace({
+            "item_id": item.id, "thread_id": item.thread_id, "user_id": context["user_id"],
+            "created_at": item.created_at, "question": _user_text(message), "answer": text,
+            "searches": [
+                {**s, "hits": [{k: h.get(k) for k in ("repo", "path", "url", "score", "chunk", "text")} for h in s["hits"]]}
+                for s in searches
+            ],
+            "cited": [a.source.url for a in annotations],
+            "model": settings.llm_model,
+            "latency_ms": int((time.monotonic() - started) * 1000),
+            "first_token_ms": int((first_token - started) * 1000) if first_token else None,
+            "error": failed,
+        })
+
     async def _history(self, thread: ThreadMetadata, context: Context) -> list[BaseMessage]:
         page = await self.store.load_thread_items(thread.id, None, settings.history_limit, "desc", context)
         messages: list[BaseMessage] = []
@@ -128,29 +148,34 @@ class MLOpsChatServer(ChatKitServer[Context]):
         ))
         queue.put_nowait(ProgressUpdateEvent(icon="search", text="Dokümanlar taranıyor…"))
         parts: list[str] = []
-        hits: list[dict] = []
+        searches: list[dict] = []
+        started, first_token, failed = time.monotonic(), None, False
         try:
             history = await self._history(thread, context)
             async for kind, data in agent.stream(history, context["user_id"]):
                 if kind == "token":
+                    first_token = first_token or time.monotonic()
                     parts.append(data)
                     queue.put_nowait(ThreadItemUpdatedEvent(
                         item_id=item.id, update=AssistantMessageContentPartTextDelta(content_index=0, delta=data)
                     ))
                 elif kind == "progress":
                     queue.put_nowait(ProgressUpdateEvent(icon="search", text=data))
-                elif kind == "hits":
-                    hits.extend(data)
+                elif kind == "search":
+                    searches.append(data)
         except Exception:
             log.exception("cevap üretilemedi: thread=%s", thread.id)
+            failed = True
             parts.append("\n\n⚠ Cevap üretilirken bir hata oluştu, lütfen tekrar dener misin?")
         text = "".join(parts)
-        item.content = [AssistantMessageContent(text=text, annotations=_sources(text, hits))]
+        annotations = _sources(text, [h for s in searches for h in s["hits"]])
+        item.content = [AssistantMessageContent(text=text, annotations=annotations)]
         try:
             await self.store.add_thread_item(thread.id, item, context)  # istemci gitmiş olsa da kaydolur
         except Exception:
             log.exception("cevap kaydedilemedi: thread=%s", thread.id)
         queue.put_nowait(ThreadItemDoneEvent(item=item))
+        _spawn(self._trace(item, message, text, searches, annotations, started, first_token, failed, context))
         # mem0 kaydı birkaç LLM çağrısı sürer; cevabı bekletmez
         # ponytail: pod kapanırsa bitmemiş hafıza kaydı kaybolur; kalıcı olmalıysa kuyruk (arq/celery)
         _spawn(memory.remember(_user_text(message), text, context["user_id"]))

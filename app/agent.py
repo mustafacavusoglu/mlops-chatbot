@@ -107,8 +107,9 @@ def _text(content) -> str:
 
 
 async def stream(messages: list[BaseMessage], user_id: str) -> AsyncIterator[tuple[str, object]]:
-    """("token", str) | ("progress", str) | ("hits", list[dict]) olayları üretir."""
+    """("token", str) | ("progress", str) | ("search", {"query", "repo", "hits"}) olayları üretir."""
     config = {"recursion_limit": settings.recursion_limit}
+    calls: dict[str, dict] = {}  # tool_call_id -> search_docs argümanları (iz için)
     async for mode, data in graph.astream(
         {"messages": messages, "user_id": user_id}, config, stream_mode=["messages", "updates"]
     ):
@@ -122,10 +123,16 @@ async def stream(messages: list[BaseMessage], user_id: str) -> AsyncIterator[tup
                 if call.get("name"):
                     yield "progress", "Dokümanlarda tekrar aranıyor…"
         else:  # updates: {node: state_update}
-            for node, update in data.items():
+            for node, update in (data or {}).items():
                 if node == "prepare":
-                    yield "hits", update["hits"]
+                    yield "search", {"query": messages[-1].content, "repo": None, "hits": update["hits"]}
+                elif node == "agent":
+                    for call in getattr(update["messages"][-1], "tool_calls", []):
+                        calls[call["id"]] = call["args"]
                 elif node == "tools":
                     for message in update["messages"]:
-                        if isinstance(message, ToolMessage) and message.artifact:
-                            yield "hits", message.artifact
+                        if isinstance(message, ToolMessage):
+                            args = calls.get(message.tool_call_id, {})
+                            yield "search", {
+                                "query": args.get("query", ""), "repo": args.get("repo"), "hits": message.artifact or [],
+                            }
