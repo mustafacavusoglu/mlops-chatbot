@@ -36,6 +36,7 @@ class SourcesFile(msgspec.Struct):
 class Settings(msgspec.Struct):
     app_title: str = "MLOps Asistanı"
     log_level: str = "INFO"
+    log_format: str = "text"  # OpenShift'te json (Loki'de alan bazlı süzme)
 
     # LLM: OpenAI uyumlu herhangi bir uç (vLLM, LiteLLM, Azure OpenAI v1, OpenAI)
     llm_base_url: str | None = None

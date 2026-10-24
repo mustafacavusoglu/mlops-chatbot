@@ -1,0 +1,645 @@
+<!doctype html>
+<html lang="tr" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Yönetim</title>
+<script src="/static/vendor/marked.umd.js"></script>
+<script src="/static/vendor/purify.min.js"></script>
+<style>
+  :root {
+    --bg: #ffffff; --fg: #0d0d0d; --muted: #6b6b6b; --surface: #f4f4f4;
+    --border: #e3e3e3; --accent: #0d0d0d; --accent-fg: #ffffff; --link: #1a5fb4;
+    --warn-bg: #fff6e5; --warn-fg: #8a5300; --error: #c0392b; --ok: #1e7b34;
+  }
+  :root[data-theme="dark"] {
+    --bg: #212121; --fg: #ececec; --muted: #a3a3a3; --surface: #303030;
+    --border: #3d3d3d; --accent: #ececec; --accent-fg: #0d0d0d; --link: #8ab4f8;
+    --warn-bg: #3a2e14; --warn-fg: #f5c46b; --error: #ff7b6b; --ok: #6fcf8a;
+  }
+  * { box-sizing: border-box; }
+  [hidden] { display: none !important; }
+  html, body { margin: 0; overflow-x: hidden; }
+  body { background: var(--bg); color: var(--fg); font: 15px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  button, input, select { font: inherit; color: inherit; }
+  a { color: var(--link); }
+  .btn { flex: none; padding: 6px 10px; border: 1px solid var(--border); border-radius: 8px; background: none; text-decoration: none; white-space: nowrap; cursor: pointer; color: var(--fg); display: inline-block; }
+  .btn:hover { background: var(--border); }
+  .btn.on { background: var(--accent); color: var(--accent-fg); border-color: var(--accent); }
+  .btn:disabled { opacity: .4; cursor: default; }
+  input[type=text], input[type=search], select { padding: 6px 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg); min-width: 0; }
+  .muted { color: var(--muted); }
+  .small { font-size: 13px; }
+  .err { color: var(--error); }
+
+  header.top { display: flex; align-items: center; gap: 10px; padding: 10px 16px; border-bottom: 1px solid var(--border); flex-wrap: wrap; }
+  header.top h1 { margin: 0; font-size: 18px; flex: 1; }
+  #who { max-width: 40vw; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  nav.tabs { display: flex; gap: 6px; padding: 10px 16px 0; flex-wrap: wrap; }
+  main { padding: 12px 16px 40px; max-width: 1100px; margin: 0 auto; }
+  .note { margin: 10px 0; padding: 10px 12px; border-radius: 10px; background: var(--warn-bg); color: var(--warn-fg); font-size: 14px; }
+  .inl-err { margin: 8px 0; color: var(--error); font-size: 14px; }
+  .loading { margin: 8px 0; color: var(--muted); font-size: 14px; }
+  .bar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 10px 0; }
+  .bar .gap { flex: 1; }
+  h2 { font-size: 16px; margin: 20px 0 8px; }
+
+  .kpis { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; margin: 10px 0; }
+  .kpi { padding: 10px 12px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface); min-width: 0; }
+  .kpi .l { color: var(--muted); font-size: 13px; }
+  .kpi .v { font-size: 26px; font-weight: 600; line-height: 1.2; }
+  .kpi .s { color: var(--muted); font-size: 12px; min-height: 18px; }
+  .kpi.bad .v { color: var(--error); }
+
+  .chartbox { position: relative; border: 1px solid var(--border); border-radius: 10px; padding: 10px 8px 4px; }
+  .chartbox svg { display: block; width: 100%; height: auto; }
+  .chartbox .t { font-size: 13px; color: var(--muted); margin: 0 6px 4px; }
+  #tip { position: fixed; z-index: 50; pointer-events: none; padding: 4px 8px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); color: var(--fg); font-size: 12px; box-shadow: 0 2px 8px rgba(0,0,0,.2); white-space: pre; }
+  .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  @media (max-width: 767px) { .grid2 { grid-template-columns: 1fr; } }
+  .list { list-style: none; margin: 0; padding: 0; }
+  .list li { display: flex; gap: 8px; align-items: baseline; padding: 6px 0; border-bottom: 1px solid var(--border); font-size: 14px; min-width: 0; }
+  .list .tx { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+  .list .n { flex: none; color: var(--muted); font-variant-numeric: tabular-nums; }
+  .linkbtn { padding: 0; border: none; background: none; color: var(--link); cursor: pointer; text-align: left; }
+
+  .tw { overflow-x: auto; }
+  table { border-collapse: collapse; width: 100%; font-size: 13px; }
+  th, td { border-bottom: 1px solid var(--border); padding: 6px 8px; text-align: left; vertical-align: top; }
+  th { color: var(--muted); font-weight: 600; }
+  tbody tr.click { cursor: pointer; }
+  tbody tr.click:hover { background: var(--surface); }
+  td.q { max-width: 380px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .tag { display: inline-block; padding: 0 6px; border-radius: 8px; font-size: 11px; border: 1px solid var(--border); }
+  .tag.error { background: var(--error); color: var(--bg); border-color: var(--error); }
+  .tag.ok { color: var(--ok); border-color: var(--ok); }
+  .tag.run { color: var(--link); border-color: var(--link); }
+  .tag.stale { background: var(--warn-bg); color: var(--warn-fg); border-color: var(--warn-fg); }
+  .pager { display: flex; align-items: center; gap: 8px; margin: 10px 0; }
+  @media (max-width: 767px) {
+    table.cards thead { display: none; }
+    table.cards, table.cards tbody, table.cards tr, table.cards td { display: block; width: 100%; }
+    table.cards tr { margin-bottom: 8px; padding: 8px 10px; border: 1px solid var(--border); border-radius: 10px; }
+    table.cards td { border: none; padding: 1px 0; }
+    table.cards td::before { content: attr(data-l) ": "; color: var(--muted); }
+    table.cards td.q { max-width: none; white-space: normal; }
+    table.cards td.q::before { content: none; }
+  }
+  .cards-list { display: grid; gap: 10px; }
+  .card { display: block; width: 100%; text-align: left; padding: 10px 12px; border: 1px solid var(--border); border-radius: 10px; background: none; cursor: pointer; overflow-wrap: anywhere; }
+  .card:hover { background: var(--surface); }
+  .card .h { display: flex; flex-wrap: wrap; gap: 4px 10px; color: var(--muted); font-size: 13px; }
+  .card .q { margin: 4px 0; font-weight: 600; }
+  .card .a { font-size: 13px; color: var(--muted); display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+
+  /* drawer */
+  #veil { position: fixed; inset: 0; z-index: 30; background: rgba(0,0,0,.4); }
+  #drawer { position: fixed; top: 0; right: 0; bottom: 0; z-index: 31; width: min(720px, 100%); overflow-y: auto; padding: 16px; background: var(--bg); border-left: 1px solid var(--border); overflow-wrap: anywhere; }
+  @media (max-width: 767px) { #drawer { width: 100%; border-left: none; } }
+  #drawer .dh { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+  #drawer .dh h2 { flex: 1; margin: 0; }
+  .dq { font-size: 17px; font-weight: 600; margin: 6px 0; }
+  .dmeta { display: flex; flex-wrap: wrap; gap: 4px 12px; color: var(--muted); font-size: 13px; }
+  .ans { margin: 12px 0; padding: 10px 12px; border: 1px solid var(--border); border-radius: 10px; }
+  .ans > :first-child { margin-top: 0; } .ans > :last-child { margin-bottom: 0; }
+  .ans img { max-width: 100%; }
+  .ans pre { overflow-x: auto; padding: 10px; border-radius: 8px; background: var(--surface); }
+  .ans table { display: block; overflow-x: auto; }
+  .ans code { background: var(--surface); padding: 1px 4px; border-radius: 4px; font-size: 13px; }
+  .ans pre code { padding: 0; background: none; }
+  .srch { margin: 10px 0; }
+  .srch .sq { font-weight: 600; font-size: 14px; }
+  .hit { margin: 6px 0 6px 8px; font-size: 13px; }
+  .hit .row { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; }
+  .sbar { flex: none; width: 60px; height: 6px; border-radius: 3px; background: var(--border); overflow: hidden; }
+  .sbar i { display: block; height: 100%; background: var(--link); }
+  .hit pre { margin: 4px 0 0; padding: 8px; max-height: 240px; overflow: auto; white-space: pre-wrap; border-radius: 8px; background: var(--surface); font-size: 12px; }
+  .exp td { background: var(--surface); }
+</style>
+</head>
+<body>
+<header class="top">
+  <a class="btn" href="/">← Sohbete dön</a>
+  <h1 id="ttl">Yönetim</h1>
+  <span id="who" class="muted small"></span>
+  <button class="btn" id="theme" type="button" aria-label="Açık/koyu tema" title="Açık/koyu tema">◐</button>
+  <a class="btn" href="/auth/logout">Çıkış</a>
+</header>
+<div id="denied" class="note" hidden>Bu sayfa için admin yetkisi gerekiyor. <a href="/">Sohbete dön</a></div>
+<div id="boot" class="loading" style="padding:12px 16px">Yükleniyor…</div>
+<div id="app" hidden>
+<nav class="tabs" role="tablist" id="tabs">
+  <button class="btn" type="button" role="tab" data-t="genel">Genel bakış</button>
+  <button class="btn" type="button" role="tab" data-t="konusmalar">Konuşmalar</button>
+  <button class="btn" type="button" role="tab" data-t="geri-bildirim">Geri bildirimler</button>
+  <button class="btn" type="button" role="tab" data-t="indeksleme">İndeksleme</button>
+</nav>
+<main>
+  <section id="p-genel" hidden>
+    <div class="bar">
+      <label for="days">Dönem:</label>
+      <select id="days"><option value="7">7 gün</option><option value="30" selected>30 gün</option><option value="90">90 gün</option></select>
+    </div>
+    <div id="ov-st"></div>
+    <div class="kpis" id="kpis"></div>
+    <div class="chartbox"><div class="t">Günlük soru sayısı (kırmızı nokta: hata olan gün)</div><div id="chart"></div></div>
+    <div class="grid2">
+      <div><h2>En çok kullanılan dokümanlar</h2><ul class="list" id="topdocs"></ul></div>
+      <div><h2>En zayıf aramalar</h2>
+        <div class="muted small">Düşük skor, ilgili dokümanın muhtemelen eksik olduğunu gösterir.</div>
+        <ul class="list" id="weak"></ul></div>
+    </div>
+  </section>
+
+  <section id="p-konusmalar" hidden>
+    <div class="bar">
+      <input type="search" id="fq" placeholder="Ara (soru/cevap)" aria-label="Ara">
+      <input type="text" id="fu" placeholder="Kullanıcı" aria-label="Kullanıcı">
+      <select id="ffb" aria-label="Oy"><option value="all">Tümü</option><option value="positive">👍</option><option value="negative">👎</option><option value="none">Oysuz</option></select>
+      <label class="small"><input type="checkbox" id="ferr"> Sadece hatalılar</label>
+      <select id="fd" aria-label="Dönem"><option value="7">7 gün</option><option value="30" selected>30 gün</option><option value="90">90 gün</option><option value="0">Tümü</option></select>
+    </div>
+    <div id="tr-st"></div>
+    <div class="tw"><table class="cards">
+      <thead><tr><th>Zaman</th><th>Kullanıcı</th><th>Soru</th><th>Oy</th><th>Süre (sn)</th><th>Skor</th><th>Arama</th><th></th></tr></thead>
+      <tbody id="trbody"></tbody>
+    </table></div>
+    <div class="pager"><button class="btn" id="prev" type="button">Önceki</button><button class="btn" id="next" type="button">Sonraki</button><span id="pginfo" class="muted small"></span></div>
+  </section>
+
+  <section id="p-geri-bildirim" hidden>
+    <div class="bar" id="fbf">
+      <button class="btn" type="button" data-k="negative">👎 Olumsuz</button>
+      <button class="btn" type="button" data-k="positive">👍 Olumlu</button>
+      <button class="btn" type="button" data-k="all">Tümü</button>
+      <span class="gap"></span>
+      <a class="btn" href="/api/admin/export.jsonl" download>JSONL indir</a>
+    </div>
+    <div class="muted small">Dosya; soru, cevap, arama sorguları ile getirilen parçalar ve skorları, ayrıca oyları içerir. Notebook'ta analiz için.</div>
+    <div id="fb-st"></div>
+    <div class="cards-list" id="fblist" style="margin-top:10px"></div>
+  </section>
+
+  <section id="p-indeksleme" hidden>
+    <div class="bar"><button class="btn" id="reall" type="button">Tümünü indeksle</button></div>
+    <div id="src-st"></div>
+    <div class="tw"><table>
+      <thead><tr><th>Kaynak</th><th>Sağlayıcı</th><th>Branch</th><th>URL</th><th></th></tr></thead>
+      <tbody id="srcbody"></tbody>
+    </table></div>
+    <div id="live" hidden>
+      <h2>Canlı ilerleme</h2>
+      <div class="muted small" id="livemeta"></div>
+      <div class="tw"><table>
+        <thead><tr><th>Kaynak</th><th>İndekslenen</th><th>Atlanan</th><th>Silinen</th><th>Parça</th><th>Hata</th></tr></thead>
+        <tbody id="livebody"></tbody>
+      </table></div>
+    </div>
+    <h2>Çalıştırma geçmişi</h2>
+    <div id="run-st"></div>
+    <div class="tw"><table>
+      <thead><tr><th></th><th>Başlangıç</th><th>Tetikleyen</th><th>Durum</th><th>Süre</th><th>İndekslenen</th><th>Atlanan</th><th>Silinen</th><th>Parça</th></tr></thead>
+      <tbody id="runbody"></tbody>
+    </table></div>
+  </section>
+</main>
+</div>
+
+<div id="veil" hidden></div>
+<aside id="drawer" role="dialog" aria-modal="true" aria-label="Konuşma detayı" hidden></aside>
+<div id="tip" hidden></div>
+
+<script>
+(() => {
+  const $ = (id) => document.getElementById(id);
+  const mk = (tag, cls, text) => Object.assign(document.createElement(tag), { className: cls || "", textContent: text ?? "" });
+  const store = {
+    get(k) { try { return localStorage.getItem(k); } catch { return null; } },
+    set(k, v) { try { localStorage.setItem(k, v); } catch {} },
+  };
+
+  let ovData = null;
+  // ---- Tema ----
+  function applyTheme(t) {
+    document.documentElement.dataset.theme = t;
+    $("theme").textContent = t === "dark" ? "☀" : "☾";
+    if (ovData) drawChart();
+  }
+  applyTheme(store.get("theme") === "dark" ? "dark" : "light");
+  $("theme").onclick = () => {
+    const t = document.documentElement.dataset.theme === "dark" ? "light" : "dark";
+    store.set("theme", t);
+    applyTheme(t);
+  };
+
+  // ---- Yardımcılar ----
+  async function api(url, opts) {
+    const r = await fetch(url, { credentials: "same-origin", ...opts });
+    if (r.status === 401) { location.href = "/auth/login"; throw new Error("401"); }
+    return r;
+  }
+  async function getJson(url) {
+    const r = await api(url);
+    if (!r.ok) throw new Error(r.status);
+    return r.json();
+  }
+  // durum satırı: loading / error / temiz
+  const stLoad = (el) => el.replaceChildren(mk("div", "loading", "Yükleniyor…"));
+  const stErr = (el, what) => el.replaceChildren(mk("div", "inl-err", `${what} alınamadı. Tekrar dene.`));
+  const stClear = (el) => el.replaceChildren();
+  const fmtDate = (v) => (v ? new Date(v).toLocaleString("tr", { dateStyle: "short", timeStyle: "short" }) : "-");
+  const sec = (ms) => (ms == null ? "-" : (ms / 1000).toFixed(1));
+  const sc2 = (v) => (v == null ? "-" : Number(v).toFixed(2));
+  const icon = (f) => (f === "positive" ? "👍" : f === "negative" ? "👎" : "");
+  const safeUrl = (u) => /^https?:\/\//i.test(u || "");
+  function ext(text, href) {
+    if (!safeUrl(href)) return mk("span", "", text);
+    const a = mk("a", "", text);
+    a.href = href; a.target = "_blank"; a.rel = "noopener noreferrer";
+    return a;
+  }
+  function renderMd(el, text) {
+    el.innerHTML = DOMPurify.sanitize(marked.parse(text || ""));
+    for (const a of el.querySelectorAll("a")) { a.target = "_blank"; a.rel = "noopener noreferrer"; }
+  }
+  const empty = () => mk("div", "muted small", "Henüz kayıt yok");
+
+  // ---- Başlangıç + sekmeler ----
+  const TABS = ["genel", "konusmalar", "geri-bildirim", "indeksleme"];
+  const loaded = {};
+  let cur = null;
+  function showTab(t) {
+    if (!TABS.includes(t)) t = "genel";
+    cur = t;
+    for (const b of $("tabs").children) b.classList.toggle("on", b.dataset.t === t);
+    for (const x of TABS) $("p-" + x).hidden = x !== t;
+    if (location.hash !== "#" + t) history.replaceState(null, "", "#" + t);
+    if (!loaded[t]) { loaded[t] = true; ({ genel: loadOverview, konusmalar: loadTraces, "geri-bildirim": loadFb, indeksleme: initIdx })[t](); }
+    if (t === "indeksleme") startRunTimer(); else clearInterval(runTimer);
+  }
+  for (const b of $("tabs").children) b.onclick = () => showTab(b.dataset.t);
+  addEventListener("hashchange", () => showTab(location.hash.slice(1)));
+
+  (async () => {
+    let me;
+    try {
+      const r = await fetch("/api/me", { credentials: "same-origin" });
+      if (r.status === 401) { location.href = "/auth/login"; return; }
+      if (!r.ok) throw new Error(r.status);
+      me = await r.json();
+    } catch { $("boot").className = "inl-err"; $("boot").textContent = "Sunucuya ulaşılamadı. Sayfayı yenilemeyi dene."; return; }
+    $("boot").hidden = true;
+    $("who").textContent = me.user || "";
+    if (me.title) document.title = me.title + " · Yönetim";
+    if (!me.is_admin) { $("denied").hidden = false; return; }
+    $("app").hidden = false;
+    meUser = me.user;
+    showTab(location.hash.slice(1));
+  })();
+  let meUser = "";
+
+  // ---- Genel bakış ----
+  let ovSeq = 0;
+  $("days").onchange = loadOverview;
+  async function loadOverview() {
+    const n = ++ovSeq, st = $("ov-st");
+    stLoad(st);
+    let d;
+    try { d = await getJson(`/api/admin/overview?days=${$("days").value}`); }
+    catch (e) { if (n === ovSeq && e.message !== "401") stErr(st, "Genel bakış"); return; }
+    if (n !== ovSeq) return;
+    stClear(st);
+    ovData = d;
+    renderKpis(d.totals || {});
+    drawChart();
+    const docs = $("topdocs"); docs.replaceChildren();
+    for (const x of d.top_docs || []) {
+      const li = docs.appendChild(mk("li"));
+      const tx = li.appendChild(mk("span", "tx"));
+      tx.append(ext(`${x.repo}/${x.path}`, x.url));
+      li.append(mk("span", "n", String(x.count)));
+    }
+    if (!docs.children.length) docs.append(empty());
+    const weak = $("weak"); weak.replaceChildren();
+    for (const x of d.weakest || []) {
+      const li = weak.appendChild(mk("li"));
+      const b = mk("button", "linkbtn tx", x.question || "(soru yok)");
+      b.type = "button";
+      b.onclick = () => openTrace(x.item_id);
+      li.append(b, mk("span", "n", sc2(x.top_score)));
+    }
+    if (!weak.children.length) weak.append(empty());
+  }
+  function renderKpis(t) {
+    const votes = (t.positive || 0) + (t.negative || 0);
+    const sat = votes ? `${Math.round((t.positive / votes) * 100)}%` : "–";
+    const errRate = t.questions ? (t.errors / t.questions) * 100 : 0;
+    const tiles = [
+      ["Soru", String(t.questions ?? 0), ""],
+      ["Aktif kullanıcı", String(t.users ?? 0), ""],
+      ["Sohbet", String(t.threads ?? 0), ""],
+      ["Memnuniyet", sat, `👍 ${t.positive || 0} · 👎 ${t.negative || 0}`],
+      ["Ortalama süre", t.avg_latency_ms == null ? "–" : `${sec(t.avg_latency_ms)} sn`, t.p95_latency_ms == null ? "" : `p95 ${sec(t.p95_latency_ms)} sn`],
+      ["İlk token", t.avg_first_token_ms == null ? "–" : `${sec(t.avg_first_token_ms)} sn`, "ortalama"],
+      ["Hata oranı", t.questions ? `${errRate.toFixed(1)}%` : "–", `${t.errors || 0} hata`, errRate > 5],
+    ];
+    const box = $("kpis"); box.replaceChildren();
+    for (const [l, v, s, bad] of tiles) {
+      const k = box.appendChild(mk("div", "kpi" + (bad ? " bad" : "")));
+      k.append(mk("div", "l", l), mk("div", "v", v), mk("div", "s", s));
+    }
+  }
+
+  // Tek seri çubuk grafik, elle SVG. Renkler CSS değişkenlerinden (iki tema).
+  const NS = "http://www.w3.org/2000/svg";
+  const sv = (tag, attrs, text) => {
+    const e = document.createElementNS(NS, tag);
+    for (const k in attrs) e.setAttribute(k, attrs[k]);
+    if (text != null) e.textContent = text;
+    return e;
+  };
+  const tip = $("tip");
+  function showTip(e, txt) {
+    tip.textContent = txt; tip.hidden = false;
+    const x = Math.min(e.clientX + 12, innerWidth - tip.offsetWidth - 8);
+    tip.style.left = Math.max(4, x) + "px"; tip.style.top = (e.clientY + 14) + "px";
+  }
+  function drawChart() {
+    const box = $("chart"); box.replaceChildren();
+    const daily = ovData?.daily || [];
+    const W = Math.max(box.clientWidth, 280), H = 220;
+    const m = { l: 34, r: 8, t: 14, b: 24 }, iw = W - m.l - m.r, ih = H - m.t - m.b;
+    if (!daily.length) return box.append(empty());
+    const max = Math.max(1, ...daily.map((d) => d.questions));
+    const nice = max <= 4 ? max : Math.ceil(max / 4) * 4;
+    const svg = sv("svg", { viewBox: `0 0 ${W} ${H}`, role: "img", "aria-label": "Günlük soru sayısı" });
+    for (const f of [0, 0.5, 1]) {
+      const y = m.t + ih - ih * f;
+      svg.append(sv("line", { x1: m.l, x2: W - m.r, y1: y, y2: y, stroke: "var(--border)", "stroke-width": 1 }));
+      svg.append(sv("text", { x: m.l - 6, y: y + 4, "text-anchor": "end", "font-size": 11, fill: "var(--muted)" }, String(Math.round(nice * f))));
+    }
+    const step = iw / daily.length, bw = Math.max(2, Math.min(24, step - 2));
+    const every = Math.max(1, Math.ceil(daily.length / Math.floor(iw / 48)));
+    daily.forEach((d, i) => {
+      const cx = m.l + step * i + step / 2, h = (d.questions / nice) * ih, y = m.t + ih - h;
+      if (d.questions > 0) {
+        const r = Math.min(4, bw / 2, h);
+        svg.append(sv("path", { d: `M${cx - bw / 2},${m.t + ih} V${y + r} Q${cx - bw / 2},${y} ${cx - bw / 2 + r},${y} H${cx + bw / 2 - r} Q${cx + bw / 2},${y} ${cx + bw / 2},${y + r} V${m.t + ih} Z`, fill: "var(--link)" }));
+      }
+      if (d.errors > 0) svg.append(sv("circle", { cx, cy: (d.questions > 0 ? y : m.t + ih) - 7, r: 3.5, fill: "var(--error)", stroke: "var(--bg)", "stroke-width": 1.5 }));
+      if (i % every === 0 || i === daily.length - 1 && every === 1) {
+        svg.append(sv("text", { x: cx, y: H - 6, "text-anchor": "middle", "font-size": 11, fill: "var(--muted)" }, d.date.slice(5)));
+      }
+      const hit = sv("rect", { x: cx - step / 2, y: m.t, width: step, height: ih, fill: "transparent" });
+      const txt = `${d.date}\nSoru: ${d.questions} · Kullanıcı: ${d.users}\nHata: ${d.errors} · 👍 ${d.positive} · 👎 ${d.negative}`;
+      hit.append(sv("title", {}, txt.replace(/\n/g, " | ")));
+      hit.onmousemove = (e) => showTip(e, txt);
+      hit.onmouseleave = () => (tip.hidden = true);
+      svg.append(hit);
+    });
+    box.append(svg);
+  }
+  let rzT;
+  addEventListener("resize", () => { clearTimeout(rzT); rzT = setTimeout(() => { if (cur === "genel" && ovData) drawChart(); }, 150); });
+
+  // ---- Konuşmalar ----
+  let trOff = 0, trTotal = 0, trSeq = 0, qT;
+  const LIM = 50;
+  const resetTr = () => { trOff = 0; loadTraces(); };
+  $("fq").oninput = () => { clearTimeout(qT); qT = setTimeout(resetTr, 300); };
+  $("fu").oninput = () => { clearTimeout(qT); qT = setTimeout(resetTr, 300); };
+  for (const id of ["ffb", "ferr", "fd"]) $(id).onchange = resetTr;
+  $("prev").onclick = () => { trOff = Math.max(0, trOff - LIM); loadTraces(); };
+  $("next").onclick = () => { trOff += LIM; loadTraces(); };
+  async function loadTraces() {
+    const n = ++trSeq, st = $("tr-st");
+    stLoad(st);
+    const p = new URLSearchParams({ q: $("fq").value.trim(), user: $("fu").value.trim(), feedback: $("ffb").value, errors: $("ferr").checked ? "1" : "0", days: $("fd").value, limit: LIM, offset: trOff });
+    let d;
+    try { d = await getJson("/api/admin/traces?" + p); }
+    catch (e) { if (n === trSeq && e.message !== "401") stErr(st, "Konuşmalar"); return; }
+    if (n !== trSeq) return;
+    stClear(st);
+    trTotal = d.total || 0;
+    const body = $("trbody"); body.replaceChildren();
+    for (const x of d.rows || []) {
+      const tr = body.appendChild(mk("tr", "click"));
+      tr.tabIndex = 0;
+      const cell = (l, txt, cls) => { const td = tr.appendChild(mk("td", cls || "", txt)); td.dataset.l = l; return td; };
+      cell("Zaman", fmtDate(x.created_at));
+      cell("Kullanıcı", x.user_id || "-");
+      cell("Soru", x.question || "", "q").title = x.question || "";
+      cell("Oy", icon(x.feedback));
+      cell("Süre", sec(x.latency_ms));
+      cell("Skor", sc2(x.top_score));
+      cell("Arama", String(x.n_search ?? 0));
+      const e = cell("", "");
+      if (x.error) e.append(mk("span", "tag error", "hata"));
+      tr.onclick = () => openTrace(x.item_id);
+      tr.onkeydown = (ev) => { if (ev.key === "Enter") openTrace(x.item_id); };
+    }
+    if (!body.children.length) st.append(empty());
+    const from = trTotal ? trOff + 1 : 0, to = Math.min(trOff + LIM, trTotal);
+    $("pginfo").textContent = `${from}–${to} / ${trTotal}`;
+    $("prev").disabled = trOff <= 0;
+    $("next").disabled = trOff + LIM >= trTotal;
+  }
+
+  // ---- Geri bildirimler ----
+  let fbKind = "negative", fbSeq = 0;
+  for (const b of $("fbf").querySelectorAll("button")) b.onclick = () => { fbKind = b.dataset.k; loadFb(); };
+  async function loadFb() {
+    const n = ++fbSeq, st = $("fb-st"), list = $("fblist");
+    for (const b of $("fbf").querySelectorAll("button")) b.classList.toggle("on", b.dataset.k === fbKind);
+    stLoad(st); list.replaceChildren();
+    let rows;
+    try { rows = await getJson(`/api/admin/feedback?kind=${fbKind}&limit=50`); }
+    catch (e) { if (n === fbSeq && e.message !== "401") stErr(st, "Geri bildirimler"); return; }
+    if (n !== fbSeq) return;
+    stClear(st);
+    if (!rows.length) st.append(empty());
+    for (const x of rows) {
+      const c = list.appendChild(mk("button", "card"));
+      c.type = "button";
+      const h = c.appendChild(mk("div", "h"));
+      h.append(mk("span", "", icon(x.kind)), mk("span", "", fmtDate(x.created_at)), mk("span", "", x.user_id || "-"));
+      c.append(mk("div", "q", x.question || "(soru kaydı yok)"), mk("div", "a", x.answer || "(cevap kaydı yok)"));
+      c.onclick = () => openTrace(x.item_id);
+    }
+  }
+
+  // ---- Detay paneli ----
+  let trcSeq = 0, lastFocus = null;
+  function closeDrawer() {
+    trcSeq++;
+    $("drawer").hidden = true; $("veil").hidden = true;
+    document.body.style.overflow = "";
+    lastFocus?.focus?.();
+  }
+  $("veil").onclick = closeDrawer;
+  addEventListener("keydown", (e) => { if (e.key === "Escape" && !$("drawer").hidden) closeDrawer(); });
+  async function openTrace(id) {
+    const n = ++trcSeq, dr = $("drawer");
+    if (dr.hidden) lastFocus = document.activeElement;
+    dr.hidden = false; $("veil").hidden = false;
+    document.body.style.overflow = "hidden";
+    const head = mk("div", "dh");
+    head.append(mk("h2", "", "Konuşma detayı"));
+    const x = head.appendChild(mk("button", "btn", "✕"));
+    x.type = "button"; x.ariaLabel = "Kapat"; x.onclick = closeDrawer;
+    dr.replaceChildren(head, mk("div", "loading", "Yükleniyor…"));
+    x.focus();
+    let t;
+    try { t = await getJson(`/api/admin/traces/${encodeURIComponent(id)}`); }
+    catch (e) { if (n === trcSeq && e.message !== "401") dr.replaceChildren(head, mk("div", "inl-err", "Detay alınamadı. Tekrar dene.")); return; }
+    if (n !== trcSeq) return;
+    const body = mk("div");
+    body.append(mk("div", "dq", t.question || "(soru kaydı yok)"));
+    const meta = body.appendChild(mk("div", "dmeta"));
+    const parts = [
+      `Kullanıcı: ${t.user_id || "-"}`, fmtDate(t.created_at), `Model: ${t.model || "-"}`,
+      `Süre: ${sec(t.latency_ms)} sn · İlk token: ${sec(t.first_token_ms)} sn`,
+      t.feedback ? `Oy: ${icon(t.feedback)}${t.feedback_at ? " " + fmtDate(t.feedback_at) : ""}` : "Oy yok",
+    ];
+    for (const p of parts) meta.append(mk("span", "", p));
+    if (t.error) meta.append(mk("span", "tag error", "hata"));
+    const ans = body.appendChild(mk("div", "ans"));
+    renderMd(ans, t.answer || "");
+    body.append(mk("h2", "", "Aramalar"));
+    const cited = new Set(t.cited || []);
+    if (!(t.searches || []).length) body.append(mk("div", "muted small", "Arama yapılmamış"));
+    for (const s of t.searches || []) {
+      const box = body.appendChild(mk("div", "srch"));
+      box.append(mk("div", "sq", `${s.query}${s.repo ? ` (${s.repo})` : ""}`));
+      for (const h of s.hits || []) {
+        const hit = box.appendChild(mk("div", "hit"));
+        const row = hit.appendChild(mk("div", "row"));
+        row.append(ext(`${h.repo}/${h.path}`, h.url), mk("span", "muted", sc2(h.score)));
+        const bar = row.appendChild(mk("span", "sbar"));
+        const i = bar.appendChild(mk("i"));
+        i.style.width = `${Math.max(0, Math.min(1, Number(h.score) || 0)) * 100}%`;
+        if (cited.has(h.url)) row.append(mk("span", "tag ok", "✓ atıf"));
+        if (h.text) {
+          const b = row.appendChild(mk("button", "linkbtn small", "Parçayı göster"));
+          b.type = "button";
+          let pre = null;
+          b.onclick = () => {
+            if (pre) { pre.remove(); pre = null; b.textContent = "Parçayı göster"; return; }
+            pre = hit.appendChild(mk("pre", "", h.text)); b.textContent = "Gizle";
+          };
+        }
+      }
+    }
+    dr.replaceChildren(head, body);
+    dr.scrollTop = 0;
+  }
+
+  // ---- İndeksleme ----
+  let pollT, runTimer, wasRunning = false, pollSeq = 0;
+  async function initIdx() {
+    $("reall").onclick = () => reindex();
+    loadSources(); loadRuns(); pollStatus();
+  }
+  async function loadSources() {
+    const st = $("src-st"), body = $("srcbody");
+    stLoad(st);
+    let rows;
+    try { rows = await getJson("/api/admin/sources"); }
+    catch (e) { if (e.message !== "401") stErr(st, "Kaynaklar"); return; }
+    stClear(st); body.replaceChildren();
+    if (!rows.length) st.append(empty());
+    for (const s of rows) {
+      const tr = body.appendChild(mk("tr"));
+      tr.append(mk("td", "", s.name), mk("td", "", s.provider || "-"), mk("td", "", s.branch || "-"));
+      tr.appendChild(mk("td")).append(s.url ? ext(s.url, s.url) : "-");
+      const b = tr.appendChild(mk("td")).appendChild(mk("button", "btn", "İndeksle"));
+      b.type = "button";
+      b.onclick = () => reindex(s.name);
+    }
+  }
+  async function reindex(source) {
+    const st = $("src-st");
+    for (const b of document.querySelectorAll("#p-indeksleme button.btn")) b.disabled = true;
+    try {
+      const r = await api("/api/admin/reindex" + (source ? `?source=${encodeURIComponent(source)}` : ""), { method: "POST" });
+      if (r.status === 202) { const j = await r.json(); stClear(st); if (!j.started) st.append(mk("div", "note", "İndeksleme zaten çalışıyor.")); }
+      else st.replaceChildren(mk("div", "inl-err", "İndeksleme başlatılamadı."));
+    } catch (e) { if (e.message !== "401") st.replaceChildren(mk("div", "inl-err", "İndeksleme başlatılamadı.")); }
+    for (const b of document.querySelectorAll("#p-indeksleme button.btn")) b.disabled = false;
+    wasRunning = true;
+    pollStatus();
+  }
+  async function pollStatus() {
+    clearTimeout(pollT);
+    const n = ++pollSeq;
+    let running = false;
+    try {
+      const s = await getJson("/api/admin/index-status");
+      if (n !== pollSeq) return;
+      running = !!s.running;
+      const show = running || wasRunning || Object.keys(s.results || {}).length;
+      $("live").hidden = !show;
+      $("livemeta").textContent = `${running ? "Çalışıyor…" : "Beklemede"} · Başlangıç: ${fmtDate(s.started_at)} · Bitiş: ${fmtDate(s.finished_at)}`;
+      const body = $("livebody"); body.replaceChildren();
+      for (const [name, x] of Object.entries(s.results || {})) {
+        const tr = body.appendChild(mk("tr"));
+        for (const v of [name, x.files_indexed, x.files_skipped, x.files_deleted, x.chunks]) tr.append(mk("td", "", v ?? "-"));
+        tr.append(mk("td", x.error ? "err" : "", x.error || ""));
+      }
+      if (!body.children.length) body.append(Object.assign(mk("td", "", "Henüz sonuç yok"), { colSpan: 6 }));
+    } catch (e) { if (e.message !== "401") $("livemeta").textContent = "Durum alınamadı."; }
+    if (wasRunning && !running) loadRuns();
+    wasRunning = running;
+    if (running && cur === "indeksleme") pollT = setTimeout(pollStatus, 2000);
+  }
+  function startRunTimer() {
+    clearInterval(runTimer);
+    runTimer = setInterval(() => { if (!document.hidden && cur === "indeksleme") loadRuns(true); }, 30000);
+    if (loaded.indeksleme && wasRunning) pollStatus();
+  }
+  const STAT = { running: ["Sürüyor", "run"], ok: ["Başarılı", "ok"], error: ["Hatalı", "error"], stale: ["Yarıda kaldı", "stale"] };
+  const trig = (t) => (t === "schedule" ? "Zamanlanmış" : `Manuel · ${String(t || "").replace(/^manual:?/, "") || "-"}`);
+  const openRuns = new Set();
+  let runSeq = 0;
+  async function loadRuns(quiet) {
+    const n = ++runSeq, st = $("run-st");
+    if (!quiet) stLoad(st);
+    let rows;
+    try { rows = await getJson("/api/admin/index-runs?limit=30"); }
+    catch (e) { if (n === runSeq && e.message !== "401") stErr(st, "Çalıştırma geçmişi"); return; }
+    if (n !== runSeq) return;
+    stClear(st);
+    const body = $("runbody"); body.replaceChildren();
+    if (!rows.length) st.append(empty());
+    for (const r of rows) {
+      const tr = body.appendChild(mk("tr", "click"));
+      const t = r.totals || {};
+      const [lbl, cls] = STAT[r.status] || [r.status, ""];
+      const arrow = tr.appendChild(mk("td", "", openRuns.has(r.id) ? "▾" : "▸"));
+      tr.append(mk("td", "", fmtDate(r.started_at)), mk("td", "", trig(r.trigger)));
+      tr.appendChild(mk("td")).append(mk("span", "tag " + cls, lbl));
+      tr.append(mk("td", "", r.duration_s == null ? "-" : `${Math.round(r.duration_s)} sn`));
+      for (const k of ["files_indexed", "files_skipped", "files_deleted", "chunks"]) tr.append(mk("td", "", String(t[k] ?? 0)));
+      let ex = null;
+      const draw = () => {
+        if (openRuns.has(r.id)) {
+          ex = mk("tr", "exp");
+          const td = ex.appendChild(mk("td")); td.colSpan = 9;
+          const entries = Object.entries(r.results || {});
+          if (!entries.length) td.append(mk("span", "muted small", "Kaynak sonucu yok"));
+          for (const [name, x] of entries) {
+            const line = td.appendChild(mk("div", "small"));
+            line.append(mk("strong", "", name + ": "), document.createTextNode(`${x.files_indexed ?? 0} indekslendi · ${x.files_skipped ?? 0} atlandı · ${x.files_deleted ?? 0} silindi · ${x.chunks ?? 0} parça`));
+            if (x.error) line.append(mk("div", "err", x.error));
+          }
+          tr.after(ex); arrow.textContent = "▾";
+        } else { ex?.remove(); ex = null; arrow.textContent = "▸"; }
+      };
+      tr.onclick = () => { openRuns.has(r.id) ? openRuns.delete(r.id) : openRuns.add(r.id); draw(); };
+      if (openRuns.has(r.id)) draw();
+    }
+  }
+})();
+</script>
+</body>
+</html>

@@ -58,29 +58,6 @@
   openai-chatkit { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
   #backdrop { display: none; }
 
-  #modal { position: fixed; inset: 0; z-index: 30; display: flex; align-items: center; justify-content: center; padding: 16px; background: rgba(0,0,0,.4); }
-  #modal .box { width: min(640px, 100%); max-height: 90vh; overflow: auto; padding: 20px; border: 1px solid var(--border); border-radius: 14px; background: var(--bg); }
-  #modal h2 { margin: 0 0 12px; font-size: 18px; }
-  .srcs { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0 12px; }
-  .meta { color: var(--muted); font-size: 13px; margin: 8px 0; }
-  .tbl { overflow-x: auto; }
-  table { border-collapse: collapse; width: 100%; font-size: 13px; }
-  th, td { border: 1px solid var(--border); padding: 5px 8px; text-align: left; vertical-align: top; }
-  td.err { color: var(--error); }
-  .tabs { display: flex; gap: 6px; margin: 0 0 12px; flex-wrap: wrap; }
-  .btn.on { background: var(--accent); color: var(--accent-fg); border-color: var(--accent); }
-  .fb-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-bottom: 8px; }
-  .fb-bar .gap { flex: 1; }
-  .fb-card { margin-top: 10px; padding: 10px 12px; border: 1px solid var(--border); border-radius: 10px; font-size: 13px; overflow-wrap: anywhere; }
-  .fb-head { display: flex; flex-wrap: wrap; gap: 4px 10px; color: var(--muted); }
-  .fb-q { margin: 6px 0 4px; font-weight: 600; font-size: 14px; }
-  .fb-a { white-space: pre-wrap; }
-  .fb-a.clamp { display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
-  .fb-more { margin: 2px 0 0; padding: 0; border: none; background: none; color: var(--link); cursor: pointer; font-size: 13px; }
-  .fb-q2 { margin-top: 6px; color: var(--muted); }
-  .fb-hit { display: block; margin-left: 10px; }
-  .box-foot { display: flex; justify-content: flex-end; margin-top: 14px; }
-
   /* Yerel (native) sohbet paneli */
   #native { flex: 1; min-height: 0; display: flex; flex-direction: column; }
   .nhead { flex: none; padding: 10px 16px; border-bottom: 1px solid var(--border); font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -141,7 +118,7 @@
   <div class="brand">MLOps Asistanı</div>
   <button class="btn" id="newchat" type="button">+ Yeni sohbet</button>
   <div id="list"></div>
-  <button class="btn" id="adminBtn" type="button" hidden>⚙ Yönetim</button>
+  <a class="btn" id="adminBtn" href="/admin" hidden>⚙ Yönetim</a>
   <div class="side-foot">
     <span class="avatar" id="avatar" aria-hidden="true"></span>
     <span id="who"></span>
@@ -169,36 +146,6 @@
       </form>
     </div>
   </section>
-</div>
-
-<div id="modal" hidden>
-  <div class="box" role="dialog" aria-modal="true" aria-labelledby="mtitle">
-    <h2 id="mtitle">Yönetim</h2>
-    <div class="tabs" role="tablist">
-      <button class="btn" id="tabBtnIdx" type="button" role="tab">İndeksleme</button>
-      <button class="btn" id="tabBtnFb" type="button" role="tab">Geri bildirimler</button>
-    </div>
-    <div id="tabIdx">
-    <div class="srcs" id="srcs"></div>
-    <div class="meta" id="imeta"></div>
-    <div class="tbl"><table>
-      <thead><tr><th>Kaynak</th><th>İndekslenen</th><th>Atlanan</th><th>Silinen</th><th>Parça</th><th>Hata</th></tr></thead>
-      <tbody id="itbody"></tbody>
-    </table></div>
-    </div>
-    <div id="tabFb" hidden>
-      <div class="fb-bar" id="fbFilter">
-        <button class="btn" type="button" data-k="negative">👎 Olumsuz</button>
-        <button class="btn" type="button" data-k="positive">👍 Olumlu</button>
-        <button class="btn" type="button" data-k="all">Tümü</button>
-        <span class="gap"></span>
-        <a class="btn" href="/api/admin/export.jsonl" download>JSONL indir</a>
-      </div>
-      <div class="meta">Dosya; soru, cevap, arama sorguları ile getirilen parçalar ve skorları, ayrıca geri bildirimi içerir. Notebook'ta analiz için.</div>
-      <div id="fbList"></div>
-    </div>
-    <div class="box-foot"><button class="btn" id="mclose" type="button">Kapat</button></div>
-  </div>
 </div>
 
 <script>
@@ -247,7 +194,7 @@
   }
   $("menu").onclick = () => setDrawer(true);
   $("backdrop").onclick = () => setDrawer(false);
-  addEventListener("keydown", (e) => { if (e.key === "Escape") { setDrawer(false); closeModal(); } });
+  addEventListener("keydown", (e) => { if (e.key === "Escape") setDrawer(false); });
 
   function setActive(id) {
     activeId = id || null;
@@ -731,121 +678,6 @@
     await nOpen(activeId);
   }
 
-  // ---- Admin paneli ----
-  let admTimer = null;
-  const fmt = (v) => (v ? new Date(v).toLocaleString("tr") : "-");
-  let fbKind = "negative", fbSeq = 0;
-  function showTab(t) {
-    const idx = t === "idx";
-    $("tabIdx").hidden = !idx; $("tabFb").hidden = idx;
-    $("tabBtnIdx").classList.toggle("on", idx); $("tabBtnFb").classList.toggle("on", !idx);
-    for (const b of $("fbFilter").querySelectorAll("button")) b.classList.toggle("on", b.dataset.k === fbKind);
-    clearTimeout(admTimer);
-    if (idx) pollStatus(); else loadFb();
-  }
-  $("tabBtnIdx").onclick = () => showTab("idx");
-  $("tabBtnFb").onclick = () => showTab("fb");
-  for (const b of $("fbFilter").querySelectorAll("button")) b.onclick = () => { fbKind = b.dataset.k; showTab("fb"); };
-
-  function fbCard(x) {
-    const c = mk("div", "fb-card");
-    const h = c.appendChild(mk("div", "fb-head"));
-    h.append(mk("span", "", x.kind === "positive" ? "👍" : "👎"), mk("span", "", fmt(x.created_at)), mk("span", "", x.user_id || "-"));
-    c.append(mk("div", "fb-q", x.question || "(soru kaydı yok)"));
-    const ans = x.answer || "";
-    const a = c.appendChild(mk("div", "fb-a", ans || "(cevap kaydı yok)"));
-    if (ans.length > 200 || ans.split("\n").length > 3) {
-      a.classList.add("clamp");
-      const m = c.appendChild(mk("button", "fb-more", "Devamı"));
-      m.type = "button";
-      m.onclick = () => { m.textContent = a.classList.toggle("clamp") ? "Devamı" : "Daralt"; };
-    }
-    const cited = new Set(x.cited || []);
-    for (const q of x.searches || []) {
-      c.append(mk("div", "fb-q2", `Arama: ${q.query}${q.repo ? ` (${q.repo})` : ""}`));
-      for (const hit of q.hits || []) {
-        const row = c.appendChild(mk("span", "fb-hit"));
-        const name = `${hit.repo}/${hit.path}`;
-        if (/^https?:\/\//i.test(hit.url || "")) {
-          const l = row.appendChild(mk("a", "", name));
-          l.href = hit.url; l.target = "_blank"; l.rel = "noopener noreferrer";
-        } else row.append(mk("span", "", name));
-        row.append(mk("span", "meta", ` ${Number(hit.score).toFixed(2)}${cited.has(hit.url) ? " ✓ atıf" : ""}`));
-      }
-    }
-    const meta = [x.model, x.latency_ms != null && `${(x.latency_ms / 1000).toFixed(1)} sn`].filter(Boolean).join(" · ");
-    if (meta) c.append(mk("div", "meta", meta));
-    return c;
-  }
-  async function loadFb() {
-    const n = ++fbSeq, list = $("fbList");
-    list.replaceChildren(mk("div", "meta", "Yükleniyor…"));
-    let rows;
-    try {
-      const r = await api(`/api/admin/feedback?kind=${fbKind}&limit=50`);
-      if (!r.ok) throw new Error(r.status);
-      rows = await r.json();
-    } catch (e) {
-      if (n === fbSeq && e.message !== "401") list.replaceChildren(mk("div", "meta", "Geri bildirimler alınamadı."));
-      return;
-    }
-    if (n !== fbSeq) return;
-    list.replaceChildren();
-    if (!rows.length) list.append(mk("div", "meta", "Henüz geri bildirim yok"));
-    for (const x of rows) list.append(fbCard(x));
-  }
-
-  function closeModal() { $("modal").hidden = true; clearTimeout(admTimer); }
-  $("mclose").onclick = closeModal;
-  $("modal").onclick = (e) => { if (e.target === $("modal")) closeModal(); };
-
-  async function reindex(source) {
-    try {
-      const r = await api("/api/admin/reindex" + (source ? `?source=${encodeURIComponent(source)}` : ""), { method: "POST" });
-      if (r.status === 202) { const j = await r.json(); if (!j.started) alert("İndeksleme zaten çalışıyor."); }
-      else alert("İndeksleme başlatılamadı.");
-    } catch (e) { if (e.message !== "401") alert("İndeksleme başlatılamadı."); }
-    pollStatus();
-  }
-  async function pollStatus() {
-    clearTimeout(admTimer);
-    if ($("modal").hidden || $("tabIdx").hidden) return;
-    let running = false;
-    try {
-      const r = await api("/api/admin/index-status");
-      const s = await r.json();
-      running = !!s.running;
-      $("imeta").textContent = `${running ? "Çalışıyor…" : "Beklemede"} · Başlangıç: ${fmt(s.started_at)} · Bitiş: ${fmt(s.finished_at)} · Tetikleyen: ${s.trigger === "schedule" ? "zamanlanmış" : s.trigger === "manual" ? "manuel" : s.trigger || "-"}`;
-      const body = $("itbody");
-      body.replaceChildren();
-      for (const [name, x] of Object.entries(s.results || {})) {
-        const tr = body.appendChild(mk("tr"));
-        for (const v of [name, x.files_indexed, x.files_skipped, x.files_deleted, x.chunks]) tr.append(mk("td", "", v ?? "-"));
-        tr.append(mk("td", x.error ? "err" : "", x.error || ""));
-      }
-      if (!body.children.length) body.append(Object.assign(mk("td", "", "Henüz sonuç yok"), { colSpan: 6 }));
-    } catch (e) { if (e.message !== "401") $("imeta").textContent = "Durum alınamadı."; }
-    if (!$("tabIdx").hidden) admTimer = setTimeout(pollStatus, running ? 2000 : 10000);
-  }
-  async function openAdmin() {
-    $("modal").hidden = false;
-    showTab("idx");
-    const box = $("srcs");
-    box.replaceChildren();
-    const all = box.appendChild(mk("button", "btn", "Tümünü indeksle"));
-    all.type = "button";
-    all.onclick = () => reindex();
-    try {
-      const r = await api("/api/admin/sources");
-      for (const s of await r.json()) {
-        const b = box.appendChild(mk("button", "btn", s.name));
-        b.type = "button";
-        b.title = [s.provider, s.url, s.branch].filter(Boolean).join(" · ");
-        b.onclick = () => reindex(s.name);
-      }
-    } catch (e) { if (e.message !== "401") box.append(mk("span", "meta", "Kaynaklar alınamadı.")); }
-  }
-
   // ---- Başlangıç ----
   (async () => {
     try {
@@ -858,7 +690,7 @@
     $("apptitle").textContent = document.querySelector(".brand").textContent = me.title || "MLOps Asistanı";
     $("who").textContent = me.user;
     $("avatar").textContent = Array.from(me.user || "?")[0].toLocaleUpperCase("tr");
-    if (me.is_admin) { $("adminBadge").hidden = false; $("adminBtn").hidden = false; $("adminBtn").onclick = openAdmin; }
+    if (me.is_admin) { $("adminBadge").hidden = false; $("adminBtn").hidden = false; }
     loadList();
     (me.ui_mode === "chatkit" ? initChat() : initNative()).catch((e) => { console.error(e); showBanner(NET_MSG); });
   })();

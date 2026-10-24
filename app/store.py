@@ -6,10 +6,11 @@ Tüm sorgular `user_id` ile süzülür: kullanıcı yalnızca kendi sohbetlerini
 Analiz için iki tablo daha (sohbet silinse de kalır):
   traces   her cevabın izi: soru, cevap, arama sorguları + gelen parçalar/skorlar, atıflar, süre, model
   feedback 👍/👎 (kullanıcı başına cevap başına bir oy; tekrar oy öncekini ezer)
+Ayrıca index_runs: indeksleme çalıştırmaları (CronJob + manuel), admin panelindeki geçmiş için.
 """
 
 from collections.abc import AsyncIterator
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 
 import msgspec
@@ -18,7 +19,8 @@ from chatkit.store import NotFoundError, Store
 from chatkit.types import Attachment, Page, ThreadItem, ThreadMetadata
 from pydantic import TypeAdapter
 from sqlalchemy import (
-    Boolean, Column, DateTime, Index, Integer, MetaData, String, Table, Text, and_, delete, insert, or_, select, update,
+    Boolean, Column, DateTime, Float, Index, Integer, MetaData, String, Table, Text, and_, delete, func, insert, or_,
+    select, update,
 )
 from sqlalchemy.ext.asyncio import create_async_engine
 
@@ -55,6 +57,8 @@ traces = Table(
     Column("answer", Text, nullable=False),
     Column("searches", Text, nullable=False),  # JSON: [{query, repo, hits: [{repo, path, url, score, chunk, text}]}]
     Column("cited", Text, nullable=False),  # JSON: cevabın altında kaynak olarak gösterilen url'ler
+    Column("top_score", Float),  # en iyi retrieval skoru: düşükse doküman eksik olabilir
+    Column("n_search", Integer, nullable=False, default=0),
     Column("model", String(255), nullable=False),
     Column("latency_ms", Integer, nullable=False),
     Column("first_token_ms", Integer),
@@ -69,8 +73,27 @@ feedback = Table(
     Column("created_at", DateTime, nullable=False, index=True),
 )
 
+index_runs = Table(
+    "index_runs", _meta,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column("trigger", String(255), nullable=False),  # schedule | manual:<kullanıcı>
+    Column("started_at", DateTime, nullable=False, index=True),
+    Column("finished_at", DateTime),
+    Column("results", Text),  # JSON: {repo: {files_indexed, files_skipped, files_deleted, chunks, error}}
+)
+STALE_AFTER_S = 3 * 3600  # bitmeden bu kadar geçtiyse pod ölmüş sayılır
+
 _item_adapter = TypeAdapter(ThreadItem)
-_JSON = ("searches", "cited")
+_JSON = ("searches", "cited", "results")
+
+
+def _repo_path(url: str) -> dict:
+    """Atıf url'sinden repo/yol (GitHub /blob/<branch>/ veya Azure ?path=) çıkarır; gösterim için."""
+    if "?path=/" in url:
+        base, _, rest = url.partition("?path=/")
+        return {"repo": base.rstrip("/").rsplit("/", 1)[-1], "path": rest.split("&", 1)[0]}
+    head, _, rest = url.partition("/blob/")
+    return {"repo": head.rstrip("/").rsplit("/", 1)[-1], "path": rest.split("/", 1)[1] if "/" in rest else rest}
 
 
 def _trace_row(row) -> dict:
@@ -203,7 +226,7 @@ class SqlStore(Store[Context]):
 
     # --- analiz: trace + feedback
     async def save_trace(self, row: dict) -> None:
-        row = {**row, **{k: msgspec.json.encode(row[k]).decode() for k in _JSON}}
+        row = {**row, **{k: msgspec.json.encode(row[k]).decode() for k in ("searches", "cited")}}
         async with self.engine.begin() as conn:
             await conn.execute(insert(traces).values(**row))
 
@@ -240,6 +263,147 @@ class SqlStore(Store[Context]):
             query = query.where(feedback.c.kind == kind)
         async with self.engine.connect() as conn:
             return [_trace_row(r) for r in await conn.execute(query)]
+
+    async def traces_page(
+        self, q: str, user: str, fb: str, errors: bool, days: int, limit: int, offset: int
+    ) -> dict:
+        query = select(
+            traces.c.item_id, traces.c.thread_id, traces.c.user_id, traces.c.created_at, traces.c.question,
+            func.substr(traces.c.answer, 1, 200).label("answer_preview"), traces.c.error, traces.c.latency_ms,
+            traces.c.first_token_ms, traces.c.model, traces.c.n_search, traces.c.top_score, traces.c.cited,
+            feedback.c.kind.label("feedback"),
+        ).select_from(traces.outerjoin(feedback, feedback.c.item_id == traces.c.item_id))
+        if q:
+            query = query.where(or_(traces.c.question.ilike(f"%{q}%"), traces.c.answer.ilike(f"%{q}%")))
+        if user:
+            query = query.where(traces.c.user_id == user)
+        if fb == "none":
+            query = query.where(feedback.c.kind.is_(None))
+        elif fb in ("positive", "negative"):
+            query = query.where(feedback.c.kind == fb)
+        if errors:
+            query = query.where(traces.c.error.is_(True))
+        if days:
+            query = query.where(traces.c.created_at >= datetime.now() - timedelta(days=days))
+        async with self.engine.connect() as conn:
+            total = await conn.scalar(select(func.count()).select_from(query.subquery()))
+            rows = await conn.execute(query.order_by(traces.c.created_at.desc()).limit(limit).offset(offset))
+            out = []
+            for r in rows:
+                row = _trace_row(r)
+                row["n_cited"] = len(row.pop("cited"))
+                out.append(row)
+        return {"total": total, "rows": out}
+
+    async def trace(self, item_id: str) -> dict:
+        query = (
+            select(traces, feedback.c.kind.label("feedback"), feedback.c.created_at.label("feedback_at"))
+            .select_from(traces.outerjoin(feedback, feedback.c.item_id == traces.c.item_id))
+            .where(traces.c.item_id == item_id)
+        )
+        async with self.engine.connect() as conn:
+            row = (await conn.execute(query)).first()
+        if row is None:
+            raise NotFoundError(item_id)
+        out = _trace_row(row)
+        out["n_cited"] = len(out["cited"])
+        return out
+
+    async def overview(self, days: int) -> dict:
+        """Genel bakış: KPI'lar, günlük seri, en çok atıf alan dokümanlar, en zayıf aramalar."""
+        # ponytail: pencere Python'da toplanıyor; günde on binlerce soruya çıkarsa SQL'de group by'a taşı
+        since = datetime.now() - timedelta(days=days)
+        async with self.engine.connect() as conn:
+            rows = (await conn.execute(
+                select(traces.c.item_id, traces.c.created_at, traces.c.user_id, traces.c.thread_id,
+                       traces.c.latency_ms, traces.c.first_token_ms, traces.c.error, traces.c.cited,
+                       traces.c.top_score, traces.c.question)
+                .where(traces.c.created_at >= since)
+            )).all()
+            votes = (await conn.execute(
+                select(feedback.c.kind, feedback.c.created_at).where(feedback.c.created_at >= since)
+            )).all()
+        start = since.date()
+        daily = {start + timedelta(days=i): {"questions": 0, "users": set(), "errors": 0, "positive": 0, "negative": 0}
+                 for i in range((datetime.now().date() - start).days + 1)}
+        cited: dict[str, int] = {}
+        for r in rows:
+            day = daily.setdefault(r.created_at.date(), {"questions": 0, "users": set(), "errors": 0,
+                                                         "positive": 0, "negative": 0})
+            day["questions"] += 1
+            day["users"].add(r.user_id)
+            day["errors"] += bool(r.error)
+            for url in msgspec.json.decode(r.cited):
+                cited[url] = cited.get(url, 0) + 1
+        for v in votes:
+            if (day := daily.get(v.created_at.date())) is not None:
+                day[v.kind] += 1
+        latencies = sorted(r.latency_ms for r in rows if not r.error)
+        first_tokens = [r.first_token_ms for r in rows if r.first_token_ms]
+        totals = {
+            "questions": len(rows),
+            "users": len({r.user_id for r in rows}),
+            "threads": len({r.thread_id for r in rows}),
+            "positive": sum(v.kind == "positive" for v in votes),
+            "negative": sum(v.kind == "negative" for v in votes),
+            "errors": sum(bool(r.error) for r in rows),
+            "avg_latency_ms": int(sum(latencies) / len(latencies)) if latencies else None,
+            "p95_latency_ms": latencies[min(len(latencies) - 1, int(len(latencies) * 0.95))] if latencies else None,
+            "avg_first_token_ms": int(sum(first_tokens) / len(first_tokens)) if first_tokens else None,
+        }
+        top_docs = []
+        for url, count in sorted(cited.items(), key=lambda kv: -kv[1])[:10]:
+            repo_path = _repo_path(url)
+            top_docs.append({**repo_path, "url": url, "count": count})
+        weakest = sorted((r for r in rows if r.top_score is not None), key=lambda r: r.top_score)[:10]
+        return {
+            "days": days,
+            "totals": totals,
+            "daily": [
+                {"date": d.isoformat(), **{**v, "users": len(v["users"])}} for d, v in sorted(daily.items())
+            ],
+            "top_docs": top_docs,
+            "weakest": [
+                {"item_id": r.item_id, "question": r.question, "top_score": r.top_score,
+                 "created_at": r.created_at.isoformat()}
+                for r in weakest
+            ],
+        }
+
+    # --- indeksleme geçmişi (CronJob pod'u da buraya yazar)
+    async def start_index_run(self, trigger: str) -> int:
+        async with self.engine.begin() as conn:
+            result = await conn.execute(insert(index_runs).values(trigger=trigger, started_at=datetime.now()))
+            return result.inserted_primary_key[0]
+
+    async def finish_index_run(self, run_id: int, results: dict) -> None:
+        async with self.engine.begin() as conn:
+            await conn.execute(
+                update(index_runs).where(index_runs.c.id == run_id)
+                .values(finished_at=datetime.now(), results=msgspec.json.encode(results).decode())
+            )
+
+    async def index_run_rows(self, limit: int) -> list[dict]:
+        async with self.engine.connect() as conn:
+            rows = await conn.execute(select(index_runs).order_by(index_runs.c.started_at.desc()).limit(limit))
+            out = []
+            for r in rows:
+                results = msgspec.json.decode(r.results) if r.results else {}
+                if r.finished_at:
+                    status = "error" if any(v.get("error") for v in results.values()) else "ok"
+                    duration = (r.finished_at - r.started_at).total_seconds()
+                else:
+                    stale = (datetime.now() - r.started_at).total_seconds() > STALE_AFTER_S
+                    status, duration = ("stale" if stale else "running"), None
+                keys = ("files_indexed", "files_skipped", "files_deleted", "chunks")
+                out.append({
+                    "id": r.id, "trigger": r.trigger, "started_at": r.started_at.isoformat(),
+                    "finished_at": r.finished_at.isoformat() if r.finished_at else None,
+                    "status": status, "duration_s": duration,
+                    "totals": {k: sum(v.get(k) or 0 for v in results.values()) for k in keys},
+                    "results": results,
+                })
+        return out
 
     async def export_traces(self) -> AsyncIterator[dict]:
         """Tüm cevap izleri + varsa oy; notebook'ta analiz için (JSONL)."""

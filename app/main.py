@@ -12,13 +12,13 @@ from fastapi.responses import FileResponse, RedirectResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.sessions import SessionMiddleware
 
-from app import auth, indexer, memory, vectorstore
+from app import auth, indexer, logs, memory, vectorstore
 from app.auth import User, current_user, require_admin, require_user
 from app.chat import running, server
 from app.config import load_sources, settings
 from app.store import store
 
-logging.basicConfig(level=settings.log_level, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+logs.setup(settings.log_level, settings.log_format)
 log = logging.getLogger(__name__)
 STATIC = Path(__file__).with_name("static")
 
@@ -72,6 +72,16 @@ def ui(request: Request) -> Response:
     if current_user(request) is None:
         return RedirectResponse("/auth/login")
     return FileResponse(STATIC / "index.html")
+
+
+@app.get("/admin", include_in_schema=False)
+def admin_page(request: Request) -> Response:
+    user = current_user(request)
+    if user is None:
+        return RedirectResponse("/auth/login")
+    if not user.is_admin:
+        return Response("Bu sayfa için admin yetkisi gerekiyor.", status_code=403, media_type="text/plain; charset=utf-8")
+    return FileResponse(STATIC / "admin.html")
 
 
 @app.get("/api/me")
@@ -138,6 +148,30 @@ def index_status(_: User = Depends(require_admin)) -> Response:
     return to_json(indexer.status)
 
 
+@app.get("/api/admin/overview")
+async def admin_overview(days: int = 30, _: User = Depends(require_admin)) -> Response:
+    return to_json(await store.overview(min(max(days, 1), 365)))
+
+
+@app.get("/api/admin/traces")
+async def admin_traces(
+    q: str = "", user: str = "", feedback: str = "all", errors: int = 0, days: int = 30,
+    limit: int = 50, offset: int = 0, _: User = Depends(require_admin),
+) -> Response:
+    page = await store.traces_page(q.strip(), user.strip(), feedback, bool(errors), days, min(limit, 200), max(offset, 0))
+    return to_json(page)
+
+
+@app.get("/api/admin/traces/{item_id}")
+async def admin_trace(item_id: str, _: User = Depends(require_admin)) -> Response:
+    return to_json(await store.trace(item_id))
+
+
+@app.get("/api/admin/index-runs")
+async def admin_index_runs(limit: int = 30, _: User = Depends(require_admin)) -> Response:
+    return to_json(await store.index_run_rows(min(limit, 200)))
+
+
 @app.get("/api/admin/feedback")
 async def admin_feedback(kind: str = "negative", limit: int = 50, _: User = Depends(require_admin)) -> Response:
     kind = None if kind == "all" else kind
@@ -158,7 +192,7 @@ async def export(_: User = Depends(require_admin)) -> StreamingResponse:
 @app.get("/api/admin/sources")
 def sources(_: User = Depends(require_admin)) -> Response:
     return to_json([
-        {"name": s.name, "provider": s.provider, "url": indexer.clean_url(s.url), "branch": s.branch}
+        {"name": s.name, "provider": indexer.provider(s), "url": indexer.clean_url(s.url), "branch": s.branch}
         for s in load_sources()
     ])
 

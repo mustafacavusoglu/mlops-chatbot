@@ -6,6 +6,7 @@ metadata:
   name: mlops-chatbot-config
 data:
   AUTH_MODE: "openshift"
+  LOG_FORMAT: "json"   # OpenShift Logging / Loki için; lokalde text
   OAUTH_CLIENT_ID: "system:serviceaccount:<namespace>:mlops-chatbot"   # <namespace> değiştir
   OAUTH_REDIRECT_URL: "https://<route-host>/auth/callback"             # <route-host> değiştir
   # Şirket içi OpenAI uyumlu uç (vLLM, LiteLLM, Azure OpenAI v1). Boş bırakılırsa api.openai.com

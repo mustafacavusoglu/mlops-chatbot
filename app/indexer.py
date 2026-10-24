@@ -18,7 +18,7 @@ from urllib.parse import urlsplit, urlunsplit
 
 from qdrant_client import models
 
-from app import vectorstore
+from app import logs, vectorstore
 from app.config import Source, load_sources, settings
 from app.llm import embed_documents
 
@@ -71,9 +71,13 @@ def clean_url(url: str) -> str:
     return urlunsplit(s._replace(netloc=s.netloc.rpartition("@")[2]))
 
 
+def provider(src: Source) -> str:
+    return src.provider or ("azure" if "/_git/" in src.url else "github")
+
+
 def web_url(src: Source, path: str) -> str:
     base = clean_url(src.url)
-    if src.provider == "azure" or (src.provider is None and "/_git/" in src.url):
+    if provider(src) == "azure":
         return f"{base}?path=/{path}&version=GB{src.branch}"
     return f"{base.removesuffix('.git')}/blob/{src.branch}/{path}"
 
@@ -247,6 +251,7 @@ async def run(only: str | None = None, trigger: str = "manual") -> dict:
             running=True, started_at=datetime.now(timezone.utc).isoformat(), finished_at=None,
             trigger=trigger, results={},
         )
+        run_id = await _record_start(trigger)
         try:
             await vectorstore.setup()
             sources = [s for s in load_sources() if only in (None, s.name)]
@@ -266,14 +271,41 @@ async def run(only: str | None = None, trigger: str = "manual") -> dict:
                                          "files_skipped": 0, "files_deleted": 0, "chunks": 0}
         finally:
             status.update(running=False, finished_at=datetime.now(timezone.utc).isoformat())
+            await _record_finish(run_id)
     return status
+
+
+# Geçmiş Postgres'te: CronJob pod'unun çalıştırmaları da admin panelinde görünür.
+# DB'ye yazılamazsa indeksleme yine yapılır, sadece geçmişe düşmez.
+async def _record_start(trigger: str) -> int | None:
+    from app.store import store  # indeksleme CLI'ı DB'siz de çalışabilsin diye geç import
+
+    try:
+        await store.setup()
+        return await store.start_index_run(trigger)
+    except Exception:
+        log.exception("indeksleme geçmişi yazılamadı")
+        return None
+
+
+async def _record_finish(run_id: int | None) -> None:
+    from app.store import store
+
+    for repo, result in status["results"].items():
+        log.info("repo indekslendi", extra={"event": "index", "repo": repo, "trigger": status["trigger"], **result})
+    if run_id is None:
+        return
+    try:
+        await store.finish_index_run(run_id, status["results"])
+    except Exception:
+        log.exception("indeksleme geçmişi yazılamadı")
 
 
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--source", default=None)
     args = ap.parse_args()
-    logging.basicConfig(level=settings.log_level)
+    logs.setup(settings.log_level, settings.log_format)
     result = asyncio.run(run(args.source, trigger="schedule"))
     print(json.dumps(result, ensure_ascii=False, indent=2))
     sys.exit(1 if any(r.get("error") for r in result["results"].values()) else 0)

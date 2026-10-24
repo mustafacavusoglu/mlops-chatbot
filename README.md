@@ -29,6 +29,8 @@ FastAPI ──/chatkit──> ChatKitServer ──arka plan görevi──> LangG
 - **ChatGPT benzeri arayüz:** solda sohbet listesi, yeni sohbet, açık/koyu tema (varsayılan açık).
 - **Geri bildirim:** cevapların altında 👍/👎; admin'ler oyları ve her cevabın arama izini panelden görür,
   JSONL olarak indirip notebook'ta analiz eder (bkz. [RAG kalitesini inceleme](#rag-kalitesini-inceleme)).
+- **Yönetim paneli (`/admin`):** kullanım KPI'ları ve grafik, tüm konuşmalar ve arama izleri, geri bildirimler,
+  indeksleme ve çalıştırma geçmişi (bkz. [Yönetim paneli](#yönetim-paneli-admin)). Loglar JSON.
 - **Sohbet silme:** listede her sohbetin yanında × butonu var, silmeden önce onay ister.
   - Cevabı hâlâ üretilen bir sohbet silinirse arka plandaki görev durdurulur ve silinen sohbete cevap
     yazılmaz.
@@ -89,7 +91,9 @@ app/
   auth.py         OpenShift OAuth + admin kararı
   llm.py          OpenAI uyumlu LLM ve embedding istemcileri
   config.py       Tüm ayarlar (msgspec, ortam değişkenlerinden)
+  logs.py         Log biçimi: JSON (Loki) veya text
   static/index.html   Arayüz: kenar çubuğu + native sohbet ekranı / ChatKit bileşeni (build yok)
+  static/admin.html   Yönetim paneli (/admin): genel bakış, konuşmalar, geri bildirimler, indeksleme
   static/vendor/      marked + DOMPurify (imajın içinde, CDN yok)
 openshift/        BuildConfig, Deployment, Route, ConfigMap, Secret örneği, CronJob...
 tests/            python -m tests.test_indexer / python -m tests.test_auth
@@ -337,6 +341,7 @@ Tüm ayarlar `app/config.py` içinde. Ortam değişkeni adı, alan adının büy
 | `ADMIN_GROUPS`, `ADMIN_USERS` | boş | virgülle ayrılmış |
 | `ADMIN_SAR_VERB` / `_RESOURCE` / `_GROUP` | `create` / `rolebindings` / `rbac.authorization.k8s.io` | bu yetkiye sahip olan admin |
 | `SESSION_SECRET` | – | **zorunlu** (openshift modunda) |
+| `LOG_LEVEL` / `LOG_FORMAT` | `INFO` / `text` | OpenShift'te `json` (ConfigMap'te ayarlı) |
 | `UI_MODE` | `native` | `native` (internet gerekmez) veya `chatkit` |
 | `CHATKIT_JS_URL`, `CHATKIT_DOMAIN_KEY` | OpenAI CDN, `local-dev` | yalnızca `UI_MODE=chatkit` için |
 
@@ -408,7 +413,7 @@ Vendor dosyalarının sürümleri: `marked` 18.0.13 (MIT), `DOMPurify` 3.4.15 (A
 
 ## Sohbetler nerede tutuluyor?
 
-Her şey **PostgreSQL**'de, dört tabloda tutulur:
+Her şey **PostgreSQL**'de, beş tabloda tutulur:
 
 | Tablo | İçerik | Sohbet silinince |
 |---|---|---|
@@ -416,6 +421,7 @@ Her şey **PostgreSQL**'de, dört tabloda tutulur:
 | `items` | mesaj: `id`, `thread_id`, `user_id`, `created_at`, `data` (soru/cevap ve kaynak kartları, JSON) | silinir |
 | `traces` | her cevabın izi: soru, cevap, agent'ın yaptığı **her arama** (sorgu, repo filtresi, gelen parçalar, metinleri ve skorları), atıf yapılan dosyalar, model, toplam süre ve ilk token süresi, hata | **kalır** |
 | `feedback` | 👍/👎: hangi cevap, kim, ne zaman. Kullanıcı başına cevap başına bir oy; yeniden oy öncekini ezer | **kalır** |
+| `index_runs` | indeksleme çalıştırmaları (CronJob ve manuel): kim/ne başlattı, ne zaman, repo bazında sonuç ve hatalar | – |
 
 - Tablolar ve indeksler uygulama açılırken yoksa oluşturulur. Ayrıca migration gerekmez; DB ve kullanıcının
   hazır olması yeterli:
@@ -434,14 +440,49 @@ Her şey **PostgreSQL**'de, dört tabloda tutulur:
 - Lokal geliştirmede `DATABASE_URL` verilmezse sqlite (`./data/chat.db`) kullanılır. OpenShift modunda
   sqlite görülürse uygulama uyarı loglar, çünkü pod yeniden başlayınca sohbetler kaybolur.
 
+## Yönetim paneli (`/admin`)
+
+Admin'ler sohbet ekranındaki **⚙ Yönetim** butonuyla ya da doğrudan `/admin` adresiyle girer. Admin
+olmayanlar 403 alır; admin kararı [OpenShift girişi](#openshift-girişi-nasıl-çalışıyor) bölümündeki gibidir.
+
+| Sekme | İçerik |
+|---|---|
+| **Genel bakış** | 7 / 30 / 90 günlük KPI'lar: soru, aktif kullanıcı, sohbet, memnuniyet (👍 oranı), ortalama ve p95 cevap süresi, ilk token süresi, hata oranı. Günlük soru grafiği (hatalı günler işaretli), en çok atıf alan dokümanlar ve **en zayıf aramalar**: en iyi retrieval skoru en düşük sorular, yani dokümanın büyük ihtimalle eksik olduğu konular |
+| **Konuşmalar** | Tüm cevaplar: metin, kullanıcı, oy, "sadece hatalılar" ve dönem süzgeçleri; sayfalı tablo. Satıra tıklayınca detay paneli: soru, markdown cevap, model, süre, oy ve **her arama** (sorgu, gelen dosyalar, skor çubukları, "✓ atıf", parçanın metni) |
+| **Geri bildirimler** | 👎 / 👍 / tümü listesi, detay paneli ve **JSONL indir** |
+| **İndeksleme** | Kaynak repolar; tek tek ya da hepsini indeksleme, canlı ilerleme ve **çalıştırma geçmişi**. Geçmiş Postgres'te tutulduğu için CronJob'ın zamanlanmış çalıştırmaları da "Zamanlanmış" olarak görünür. Satır açılınca repo bazında sonuç ve hatalar |
+
+### Loglar
+
+Panel uygulamanın anlamlı olaylarını gösterir. Teknik pod logları ise OpenShift'te kalır: konsoldaki pod
+**Logs** sekmesi, ya da kümede OpenShift Logging (Loki) varsa **Observe → Logs**.
+
+OpenShift'te loglar JSON'dur (`LOG_FORMAT=json`); her satır `ts`, `level`, `logger`, `msg` ve olaya özel
+alanlar taşır. Uvicorn'un erişim logları da aynı biçimdedir. İki olay tipi özellikle işe yarar:
+
+```json
+{"ts":"…","level":"INFO","logger":"app.chat","msg":"cevap tamamlandı","event":"answer","item_id":"msg_…","thread_id":"thr_…","user":"ayse","latency_ms":10026,"first_token_ms":4241,"n_search":3,"top_score":0.75,"n_cited":5,"error":false}
+{"ts":"…","level":"INFO","logger":"app.indexer","msg":"repo indekslendi","event":"index","repo":"mlops-platform","trigger":"schedule","files_indexed":12,"files_skipped":630,"files_deleted":1,"chunks":48,"error":null}
+```
+
+Soru ve cevap metinleri loga yazılmaz, sadece `traces` tablosunda durur. Loki'de örnek sorgular:
+
+```
+{kubernetes_namespace_name="mlops-chatbot"} | json | level="ERROR"
+{kubernetes_namespace_name="mlops-chatbot"} | json | event="answer" | latency_ms > 20000
+{kubernetes_namespace_name="mlops-chatbot"} | json | event="index" | error != ""
+```
+
+Lokalde `LOG_FORMAT` verilmezse okunabilir düz metin kullanılır.
+
 ## RAG kalitesini inceleme
 
 Kullanıcılar cevapların altındaki 👍/👎 ile oy verir; ChatKit modunda ChatKit'in kendi butonları aynı isteği
 gönderir. Her cevabın izi (`traces`) ayrıca otomatik kaydedilir, yani oy verilmeyen cevaplar da incelenebilir.
 
-- **Admin paneli:** **⚙ Yönetim → Geri bildirimler** sekmesi 👎/👍 cevapları listeler. Her satırda soru,
-  cevap, agent'ın yaptığı aramalar, gelen dosyalar ve skorları görünür; atıf yapılan dosyalar "✓ atıf"
-  ile işaretlidir.
+- **Admin paneli:** `/admin` sayfasında **Konuşmalar** tüm cevapları, **Geri bildirimler** 👎/👍 alanları
+  listeler. Bir satıra tıklayınca soru, cevap, agent'ın yaptığı aramalar, gelen dosyalar ve skorları görünür;
+  atıf yapılan dosyalar "✓ atıf" ile işaretlidir (bkz. [Yönetim paneli](#yönetim-paneli-admin)).
 - **Toplu analiz:** aynı sekmedeki **JSONL indir** (`/api/admin/export.jsonl`) tüm izleri oylarıyla birlikte
   indirir. Dosya bir OpenShift AI workbench'inde doğrudan açılabilir:
 

@@ -101,7 +101,8 @@ class MLOpsChatServer(ChatKitServer[Context]):
 
     async def _trace(self, item, message, text, searches, annotations, started, first_token, failed, context) -> None:
         """RAG'i iyileştirmek için cevabın izi: hangi sorgularla ne geldi, skorlar, neye atıf yapıldı, ne kadar sürdü."""
-        await self.store.save_trace({
+        hits = [h for s in searches for h in s["hits"]]
+        row = {
             "item_id": item.id, "thread_id": item.thread_id, "user_id": context["user_id"],
             "created_at": item.created_at, "question": _user_text(message), "answer": text,
             "searches": [
@@ -109,11 +110,20 @@ class MLOpsChatServer(ChatKitServer[Context]):
                 for s in searches
             ],
             "cited": [a.source.url for a in annotations],
+            "top_score": max((h["score"] for h in hits), default=None),
+            "n_search": len(searches),
             "model": settings.llm_model,
             "latency_ms": int((time.monotonic() - started) * 1000),
             "first_token_ms": int((first_token - started) * 1000) if first_token else None,
             "error": failed,
+        }
+        # Loki'de süzülebilen olay satırı (metinler loga yazılmaz, trace tablosunda durur)
+        log.info("cevap tamamlandı", extra={
+            "event": "answer", "item_id": item.id, "thread_id": item.thread_id, "user": context["user_id"],
+            "latency_ms": row["latency_ms"], "first_token_ms": row["first_token_ms"], "n_search": row["n_search"],
+            "top_score": row["top_score"], "n_cited": len(row["cited"]), "error": failed,
         })
+        await self.store.save_trace(row)
 
     async def _history(self, thread: ThreadMetadata, context: Context) -> list[BaseMessage]:
         page = await self.store.load_thread_items(thread.id, None, settings.history_limit, "desc", context)
