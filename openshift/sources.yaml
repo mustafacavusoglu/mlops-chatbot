@@ -1,0 +1,8 @@
+# Şirket içi Azure DevOps Server: https://<sunucu>/<collection>/<project>/_git/<repo>
+# Alanların açıklaması: sources.example.yaml
+sources:
+  - name: mlops-platform
+    url: https://azuredevops.sirket.local/DefaultCollection/MLOps/_git/mlops-platform
+    branch: main
+    token_env: AZURE_DEVOPS_PAT
+    exclude: ["tests/**"]

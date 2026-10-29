@@ -58,7 +58,7 @@ FastAPI ──/chatkit──> ChatKitServer ──arka plan görevi──> LangG
     parçaları Qdrant'tan da silinir.
   - Repolar paralel klonlanır, embedding'ler batch halinde paralel gönderilir.
 - **Her şey parametrik:** repo listesi, modeller, Qdrant, admin kuralları ConfigMap'ten; anahtarlar
-  Secret'tan gelir. ConfigMap'teki `sources.yaml` her indekslemede yeniden okunur, pod'u yeniden
+  Secret'tan gelir. `openshift/sources.yaml` her indekslemede yeniden okunur, pod'u yeniden
   başlatmaya gerek yok.
 
 ### Agentic AI best practice'leri
@@ -95,7 +95,8 @@ app/
   static/index.html   Arayüz: kenar çubuğu + native sohbet ekranı / ChatKit bileşeni (build yok)
   static/admin.html   Yönetim paneli (/admin): genel bakış, konuşmalar, geri bildirimler, indeksleme
   static/vendor/      marked + DOMPurify (imajın içinde, CDN yok)
-openshift/        BuildConfig, Deployment, Route, ConfigMap, Secret örneği, CronJob...
+openshift/        BuildConfig, Deployment, Route, ConfigMap, sources.yaml, Secret örneği, CronJob...
+openshift-crc/    Lokal OpenShift (crc) overlay'i: Postgres + Qdrant, host'taki LLM, binary build
 tests/            python -m tests.test_indexer / python -m tests.test_auth
 ```
 
@@ -141,13 +142,15 @@ python -m tests.test_auth
 
 ## OpenShift'e kurulum
 
+> Önce kendi makinende denemek istersen: [Lokal OpenShift (crc) ile deneme](#lokal-openshift-crc-ile-deneme).
+
 ### 0. Önceden hazır olması gerekenler
 
 | Gereken | Not |
 |---|---|
 | `oc` ile kümeye giriş | Namespace içinde admin yetkin olmalı |
 | PostgreSQL | Boş bir DB ve kullanıcı yeterli; tabloları uygulama açılırken kendisi oluşturur (bkz. [Sohbetler nerede tutuluyor?](#sohbetler-nerede-tutuluyor)) |
-| Qdrant | Kümede çalışıyor olmalı; adresi ve varsa API key'i lazım. Yoksa resmi Helm chart'ıyla (`qdrant/qdrant`) kurulabilir |
+| Qdrant | **1.19 veya üstü** (uygulamadaki client 1.20). Kümede çalışıyor olmalı; adresi ve varsa API key'i lazım. Yoksa resmi Helm chart'ıyla (`qdrant/qdrant`) kurulabilir |
 | LLM ve embedding ucu | OpenAI uyumlu olmalı, ör. OpenShift AI'da vLLM ile serve edilen model. Adres, model adı ve embedding boyutu lazım |
 | Azure DevOps PAT | **Code → Read** yetkisi yeterli; hem repoları indekslemek hem build için kullanılır |
 | İnternet | **Gerekmez.** Varsayılan arayüz (`UI_MODE=native`) tamamen kümede çalışır. Yalnızca `UI_MODE=chatkit` seçilirse tarayıcıların OpenAI CDN'ine erişmesi gerekir (bkz. [Arayüz modları](#arayüz-modları-native-ve-chatkit)) |
@@ -188,7 +191,8 @@ Ardından dosyalarda şunları kendi değerlerinle değiştir:
   - `LLM_BASE_URL` ve `EMBEDDING_BASE_URL`: yorum satırını aç.
   - `LLM_MODEL`, `EMBEDDING_MODEL`, `EMBEDDING_DIM`: `EMBEDDING_DIM`, modelin vektör boyutuyla aynı olmalı.
   - `ADMIN_GROUPS`: admin sayılacak OpenShift grupları (virgülle).
-  - `sources.yaml`: indekslenecek Azure Repos adresleri (bkz. [Repo listesi](#repo-listesi-sourcesyaml)).
+- **`openshift/sources.yaml`:** indekslenecek Azure Repos adresleri (bkz. [Repo listesi](#repo-listesi-sourcesyaml)).
+  `oc apply -k` bu dosyadan `mlops-chatbot-sources` ConfigMap'ini üretir.
 - **`OAUTH_REDIRECT_URL`:** şimdilik bırak, 5. adımda dolduracağız.
 
 Şirket içi PyPI mirror'ı (Nexus/Artifactory) veya farklı bir base imaj kullanılacaksa BuildConfig'e
@@ -317,6 +321,94 @@ Bunlar `openshift/serviceaccount.yaml` dosyasında hazır.
 OAuth sunucusu ve git sunucuları şirket CA'sı ile imzalıysa `mlops-chatbot-trusted-ca` ConfigMap'i
 kümenin güvenilir CA paketini enjekte eder ve `SSL_CERT_FILE` ile kullanılır.
 
+## Lokal OpenShift (crc) ile deneme
+
+Şirket kümesine koymadan önce OpenShift girişini, build'i, Route'u ve indeksleme CronJob'ını kendi makinende
+[OpenShift Local (crc)](https://developers.redhat.com/products/openshift-local/overview) ile deneyebilirsin.
+`openshift-crc/` overlay'i `openshift/` klasörünü temel alır ve üzerine şunları ekler:
+
+- Cluster içinde basit bir Postgres ve Qdrant (`infra.yaml`, veri `emptyDir`'da: pod yeniden başlarsa silinir).
+- Host'taki OpenAI uyumlu uca (ör. LiteLLM `localhost:4000`) giden ayarlar (`config-patch.yaml`).
+- Kaynak olarak yalnızca public `odh-docs` reposu (`sources.yaml`), token gerekmez.
+- Azure git yerine lokal repodan build (BuildConfig `Binary`).
+
+Gerekenler: crc (OpenShift preset), en az ~12 GB boş RAM, Red Hat
+[pull secret](https://console.redhat.com/openshift/create/local) (ücretsiz hesapla indirilir) ve host'ta çalışan
+bir LLM + embedding ucu. Model adları ve embedding boyutu `openshift-crc/config-patch.yaml` içinde, kendi
+ucuna göre değiştir.
+
+### 1. crc'yi hazırla (bir kez)
+
+```bash
+crc config set memory 12288
+crc config set cpus 6
+crc config set pull-secret-file ~/.crc/pull-secret.txt
+crc config set host-network-access true    # pod'lar host'a host.crc.testing ile erişsin
+crc setup
+crc start
+```
+
+`host-network-access` ayarı `crc setup`'tan sonra açıldıysa `crc cleanup` gerekmez:
+`crc stop`, `launchctl kickstart -k gui/$(id -u)/com.redhat.crc.daemon`, `crc start` yeterli.
+
+### 2. Proje ve Secret
+
+```bash
+eval $(crc oc-env)
+crc console --credentials                  # kubeadmin şifresi
+oc login -u kubeadmin https://api.crc.testing:6443
+oc new-project mlops-chatbot
+```
+
+```bash
+oc create secret generic mlops-chatbot-secrets \
+  --from-literal=QDRANT_URL=http://qdrant:6333 \
+  --from-literal=LLM_API_KEY=<llm-key> \
+  --from-literal=SESSION_SECRET="$(openssl rand -hex 32)" \
+  --from-literal=DATABASE_URL=postgresql://chatbot:chatbot@postgres:5432/mlops_chatbot
+```
+
+### 3. Kur, build al, indeksle
+
+```bash
+oc apply -k openshift-crc
+```
+
+```bash
+oc start-build mlops-chatbot --from-repo=. --follow    # son commit; commit'lenmemiş değişiklik için --from-dir=.
+```
+
+```bash
+oc create job --from=cronjob/mlops-chatbot-indexer ilk-indeksleme
+oc logs -f job/ilk-indeksleme
+```
+
+### 4. Dene
+
+https://mlops-chatbot-mlops-chatbot.apps-crc.testing adresini aç. `developer` / `developer` normal kullanıcı,
+`kubeadmin` admin olarak girer (`ADMIN_USERS`).
+
+Tarayıcı sertifika uyarısı verir, çünkü `*.apps-crc.testing` gerçek bir alan adı değil (Let's Encrypt gibi
+ücretsiz sertifikalar bu yüzden alınamaz). crc'nin kendi CA'sını macOS'a güvenilir olarak ekle, konsol ve
+OpenShift giriş sayfası da düzelir:
+
+```bash
+oc get secret router-ca -n openshift-ingress-operator -o jsonpath='{.data.tls\.crt}' | base64 -d > crc-ingress-ca.crt
+security add-trusted-cert -r trustRoot -k ~/Library/Keychains/login.keychain-db crc-ingress-ca.crt
+```
+
+İş bitince `crc stop` ile durdur; kurulum ve imaj kalır, Postgres ve Qdrant verisi sıfırlanır.
+
+### crc'de karşılaşılabilecek sorunlar
+
+| Belirti | Sebep / çözüm |
+|---|---|
+| Pod log basmadan `exit code 132` ile çöküyor (Apple M4) | `cryptography`'nin OpenSSL'i VM'de olmayan bir CPU özelliğini kullanıyor. Overlay'deki `OPENSSL_armcap: "0"` çözer; gerçek kümede gerekmez |
+| İndeksleme veya sohbet LLM'e bağlanırken timeout | `host-network-access` kapalı (bkz. 1. adım) |
+| LLM'e bağlanırken `Connection refused` | Host'taki LLM ucu kapalı (ör. Docker/OrbStack durmuş) ya da port yanlış |
+| `crc setup` bundle'ı çok yavaş indiriyor | Mirror bağlantı başına ~2 MB/s veriyor. Dosyayı paralel `curl -r` ile indirip `~/.crc/cache/` altına koy, SHA256'yı kontrol et; `crc setup` onu kullanır |
+| Pod'lar `Pending` ya da Mac donuyor | RAM yetmiyor; Docker/Ollama gibi diğer işleri azalt ya da `crc config set memory` değerini düşür |
+
 ## Ayarlar
 
 Tüm ayarlar `app/config.py` içinde. Ortam değişkeni adı, alan adının büyük harfidir.
@@ -346,6 +438,9 @@ Tüm ayarlar `app/config.py` içinde. Ortam değişkeni adı, alan adının büy
 | `CHATKIT_JS_URL`, `CHATKIT_DOMAIN_KEY` | OpenAI CDN, `local-dev` | yalnızca `UI_MODE=chatkit` için |
 
 ### Repo listesi (`sources.yaml`)
+
+Lokalde kök dizindeki `sources.yaml`, OpenShift'te `openshift/sources.yaml` kullanılır. Kümede listeyi
+değiştirmek için dosyayı düzenleyip `oc apply -k openshift/` çalıştır; bir sonraki indeksleme yeni listeyi okur.
 
 ```yaml
 sources:

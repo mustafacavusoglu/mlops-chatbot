@@ -1,0 +1,27 @@
+# Lokal deneme: OpenShift Local (crc). Kullanım: README → "Lokal OpenShift (crc) ile deneme"
+#   oc apply -k openshift-crc
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: mlops-chatbot
+resources:
+  - ../openshift
+  - infra.yaml
+images:
+  - name: image-registry.openshift-image-registry.svc:5000/<namespace>/mlops-chatbot
+    newName: image-registry.openshift-image-registry.svc:5000/mlops-chatbot/mlops-chatbot
+configMapGenerator:
+  - name: mlops-chatbot-sources
+    behavior: replace
+    files: [sources.yaml]
+    options:
+      disableNameSuffixHash: true
+patches:
+  - path: config-patch.yaml
+  # Kod Azure git yerine lokal repodan gelir: oc start-build mlops-chatbot --from-repo=.
+  - target: {kind: BuildConfig, name: mlops-chatbot}
+    patch: |
+      - op: replace
+        path: /spec/source
+        value: {type: Binary}
+      - op: remove
+        path: /spec/triggers

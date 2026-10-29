@@ -1,0 +1,5 @@
+# Lokal deneme: public, token istemeyen OpenShift AI (Open Data Hub) dokümantasyonu
+sources:
+  - name: odh-docs
+    url: https://github.com/opendatahub-io/opendatahub-documentation.git
+    include: ["modules/**/*.adoc", "*.adoc"]

@@ -3,7 +3,7 @@ __pycache__/
 .venv/
 venv/
 .env
-sources.yaml
+/sources.yaml
 data/
 secret.yaml
 openshift/secret.yaml

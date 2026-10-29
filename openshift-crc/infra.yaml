@@ -1,0 +1,46 @@
+# Lokal deneme için Postgres + Qdrant. ponytail: emptyDir, pod yeniden başlarsa veri gider; kalıcı test için PVC
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: postgres}
+spec:
+  selector: {matchLabels: {app: postgres}}
+  template:
+    metadata: {labels: {app: postgres}}
+    spec:
+      containers:
+        - name: postgres
+          image: quay.io/sclorg/postgresql-16-c9s
+          env:
+            - {name: POSTGRESQL_USER, value: chatbot}
+            - {name: POSTGRESQL_PASSWORD, value: chatbot}
+            - {name: POSTGRESQL_DATABASE, value: mlops_chatbot}
+          ports: [{containerPort: 5432}]
+          volumeMounts: [{name: data, mountPath: /var/lib/pgsql/data}]
+      volumes: [{name: data, emptyDir: {}}]
+---
+apiVersion: v1
+kind: Service
+metadata: {name: postgres}
+spec: {selector: {app: postgres}, ports: [{port: 5432}]}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: qdrant}
+spec:
+  selector: {matchLabels: {app: qdrant}}
+  template:
+    metadata: {labels: {app: qdrant}}
+    spec:
+      containers:
+        - name: qdrant
+          image: docker.io/qdrant/qdrant:v1.20.0-unprivileged
+          ports: [{containerPort: 6333}]
+          volumeMounts:
+            - {name: data, mountPath: /qdrant/storage}
+            - {name: snap, mountPath: /qdrant/snapshots}
+      volumes: [{name: data, emptyDir: {}}, {name: snap, emptyDir: {}}]
+---
+apiVersion: v1
+kind: Service
+metadata: {name: qdrant}
+spec: {selector: {app: qdrant}, ports: [{port: 6333}]}

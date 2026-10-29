@@ -1,0 +1,19 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: mlops-chatbot-config
+data:
+  OAUTH_CLIENT_ID: "system:serviceaccount:mlops-chatbot:mlops-chatbot"
+  OAUTH_REDIRECT_URL: "https://mlops-chatbot-mlops-chatbot.apps-crc.testing/auth/callback"
+  # Host'taki OpenAI uyumlu uç (LiteLLM vb.). Pod'lar host'a host.crc.testing ile erişir
+  # (crc config set host-network-access true gerekir).
+  LLM_BASE_URL: "http://host.crc.testing:4000"
+  LLM_MODEL: "deepseek-flash"
+  MEMORY_LLM_MODEL: "deepseek-flash"
+  EMBEDDING_MODEL: "qwen3-embedding"
+  EMBEDDING_DIM: "1024"
+  EMBEDDING_QUERY_PREFIX: "Instruct: Given a web search query, retrieve relevant passages that answer the query\nQuery:"
+  ADMIN_USERS: "kubeadmin"
+  LOG_FORMAT: "text"
+  # Apple M4: crc VM'inde cryptography'nin OpenSSL'i SIGILL ile çöker (exit 132). Gerçek kümede gerekmez.
+  OPENSSL_armcap: "0"

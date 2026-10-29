@@ -1,5 +1,4 @@
-# Tek ConfigMap: env değişkenleri (envFrom) + sources.yaml (/config volume).
-# Basit tutmak için ikisi aynı yerde; envFrom'a sources.yaml anahtarı da girer ama zararsız.
+# Env değişkenleri (envFrom). Repo listesi ayrı dosyada: openshift/sources.yaml
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -30,12 +29,3 @@ data:
   CHATKIT_JS_URL: "https://cdn.platform.openai.com/deployments/chatkit/chatkit.js"
   CHATKIT_DOMAIN_KEY: "local-dev"
   WORKERS: "1"
-  sources.yaml: |
-    # Şirket içi Azure DevOps Server: https://<sunucu>/<collection>/<project>/_git/<repo>
-    # Alanların açıklaması: sources.example.yaml
-    sources:
-      - name: mlops-platform
-        url: https://azuredevops.sirket.local/DefaultCollection/MLOps/_git/mlops-platform
-        branch: main
-        token_env: AZURE_DEVOPS_PAT
-        exclude: ["tests/**"]

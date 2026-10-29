@@ -64,7 +64,7 @@ spec:
       volumes:
         - name: config
           configMap:
-            name: mlops-chatbot-config
+            name: mlops-chatbot-sources
             items:
               - {key: sources.yaml, path: sources.yaml}
         - name: trusted-ca

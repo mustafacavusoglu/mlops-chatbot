@@ -11,3 +11,10 @@ resources:
   - service.yaml
   - route.yaml
   - cronjob-indexer.yaml
+# Repo listesi düz YAML olarak sources.yaml'da; ConfigMap ondan üretilir.
+# Sabit isim: değişince pod yeniden başlamaz, indexer bir sonraki çalışmada yeni listeyi okur.
+configMapGenerator:
+  - name: mlops-chatbot-sources
+    files: [sources.yaml]
+    options:
+      disableNameSuffixHash: true
